@@ -23,11 +23,33 @@ import com.indianservers.ai_stem.data.scene.SceneStorageResult
 import com.indianservers.ai_stem.domain.mathematics.DefaultMathObjectRegistry
 import com.indianservers.ai_stem.domain.mathematics.MathObjectType
 import com.indianservers.ai_stem.domain.mathematics.MathParameterValue
+import com.indianservers.ai_stem.domain.graph.ArGraphDomain
+import com.indianservers.ai_stem.domain.graph.ArMathEngine
+import com.indianservers.ai_stem.domain.graph.GraphQualityPreset
+import com.indianservers.ai_stem.domain.graph.GraphSlider
+import com.indianservers.ai_stem.domain.geometry.ConstructionConstraintKind
+import com.indianservers.ai_stem.domain.geometry.ConstructionGeometryEngine
+import com.indianservers.ai_stem.domain.interaction.ArGestureHandle
+import com.indianservers.ai_stem.domain.interaction.ArInteractionEngine
+import com.indianservers.ai_stem.domain.interaction.ArSnappingProfile
+import com.indianservers.ai_stem.domain.interaction.SnapKind
 import com.indianservers.ai_stem.domain.scene.DefaultObjectTransformService
 import com.indianservers.ai_stem.domain.scene.ExperienceMode
+import com.indianservers.ai_stem.domain.scene.ArDepthOcclusionMode
+import com.indianservers.ai_stem.domain.scene.ArWorkflowEngine
+import com.indianservers.ai_stem.domain.scene.ArWorkflowProgress
+import com.indianservers.ai_stem.domain.scene.ArWorkflowSignal
+import com.indianservers.ai_stem.domain.scene.ArWorkflowTemplates
+import com.indianservers.ai_stem.domain.scene.ArPerformanceProfile
+import com.indianservers.ai_stem.domain.scene.ArSceneProductionSettings
+import com.indianservers.ai_stem.domain.scene.ArSceneShareExporter
+import com.indianservers.ai_stem.domain.scene.ArSceneTemplates
+import com.indianservers.ai_stem.domain.scene.PersistentAnchorKind
+import com.indianservers.ai_stem.domain.scene.PersistentAnchorRecord
 import com.indianservers.ai_stem.domain.scene.SceneInteractionMode
 import com.indianservers.ai_stem.domain.scene.SceneMutations
 import com.indianservers.ai_stem.domain.scene.SnapshotSceneCommand
+import com.indianservers.ai_stem.domain.scene.TransformMovement
 import com.indianservers.ai_stem.domain.scene.TransformRotation
 import com.indianservers.ai_stem.domain.scene.TransformScaling
 import com.indianservers.ai_stem.domain.scene.Vector3Value
@@ -41,6 +63,11 @@ class ArViewerViewModel : ViewModel() {
     private var sceneRepository: SceneRepository? = null
     private val stabilityEngine = ArStabilityEngine()
     private val guidanceEngine = ArGuidanceEngine()
+    private val arMathEngine = ArMathEngine()
+    private val arInteractionEngine = ArInteractionEngine(arMathEngine)
+    private val constructionEngine = ConstructionGeometryEngine()
+    private val arSceneShareExporter = ArSceneShareExporter()
+    private val arWorkflowEngine = ArWorkflowEngine()
 
     fun checkAvailability(context: Context) {
         sceneRepository = sceneRepository ?: LocalSceneRepository(context.applicationContext)
@@ -402,11 +429,143 @@ class ArViewerViewModel : ViewModel() {
 
     fun updateLiveEquation(equation: String) {
         _uiState.update {
+            val trimmed = equation.take(160)
+            val compiled = arMathEngine.compile(
+                source = trimmed,
+                existingSliders = it.arGraphSliders,
+                domain = it.arGraphDomain,
+                qualityPreset = it.arGraphQualityPreset
+            )
+            val comparison = arMathEngine.compile(
+                source = it.comparisonEquation,
+                existingSliders = it.arGraphSliders,
+                domain = it.arGraphDomain,
+                qualityPreset = it.arGraphQualityPreset
+            )
             it.copy(
-                liveEquation = equation.take(80),
+                liveEquation = trimmed,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = arMathEngine.analyze(compiled, it.arGraphAnalysisFocusX, comparison),
+                arGraphSliders = compiled.parameters,
                 selectedObjectType = MathObjectType.SineCurve,
                 selectedDefinitionId = "sine-curve",
-                userMessage = UiMessage("AR equation updated.")
+                userMessage = UiMessage(compiled.message)
+            )
+        }
+    }
+
+    fun updateArGraphSlider(symbol: String, value: Float) {
+        _uiState.update {
+            val sliders = it.arGraphSliders.map { slider ->
+                if (slider.symbol == symbol) slider.copy(value = value.toDouble().coerceIn(slider.minimum, slider.maximum)) else slider
+            }
+            val compiled = arMathEngine.compile(
+                source = it.liveEquation,
+                existingSliders = sliders,
+                domain = it.arGraphDomain,
+                qualityPreset = it.arGraphQualityPreset
+            )
+            val comparison = arMathEngine.compile(
+                source = it.comparisonEquation,
+                existingSliders = sliders,
+                domain = it.arGraphDomain,
+                qualityPreset = it.arGraphQualityPreset
+            )
+            it.copy(
+                arGraphSliders = sliders,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = arMathEngine.analyze(compiled, it.arGraphAnalysisFocusX, comparison),
+                selectedObjectType = MathObjectType.SineCurve,
+                selectedDefinitionId = "sine-curve",
+                userMessage = UiMessage("$symbol = ${"%.2f".format(value)}")
+            )
+        }
+    }
+
+    fun setArGraphQualityPreset(qualityPreset: GraphQualityPreset) {
+        _uiState.update {
+            val compiled = arMathEngine.compile(
+                source = it.liveEquation,
+                existingSliders = it.arGraphSliders,
+                domain = it.arGraphDomain,
+                qualityPreset = qualityPreset
+            )
+            val comparison = arMathEngine.compile(
+                source = it.comparisonEquation,
+                existingSliders = it.arGraphSliders,
+                domain = it.arGraphDomain,
+                qualityPreset = qualityPreset
+            )
+            it.copy(
+                arGraphQualityPreset = qualityPreset,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = arMathEngine.analyze(compiled, it.arGraphAnalysisFocusX, comparison),
+                userMessage = UiMessage("${qualityPreset.label()} graph quality selected.")
+            )
+        }
+    }
+
+    fun updateArGraphDomain(domain: ArGraphDomain) {
+        _uiState.update {
+            val safeDomain = domain.copy(
+                xMin = minOf(domain.xMin, domain.xMax - 0.25),
+                xMax = maxOf(domain.xMax, domain.xMin + 0.25),
+                yMin = minOf(domain.yMin, domain.yMax - 0.25),
+                yMax = maxOf(domain.yMax, domain.yMin + 0.25)
+            )
+            val compiled = arMathEngine.compile(
+                source = it.liveEquation,
+                existingSliders = it.arGraphSliders,
+                domain = safeDomain,
+                qualityPreset = it.arGraphQualityPreset
+            )
+            val comparison = arMathEngine.compile(
+                source = it.comparisonEquation,
+                existingSliders = it.arGraphSliders,
+                domain = safeDomain,
+                qualityPreset = it.arGraphQualityPreset
+            )
+            it.copy(
+                arGraphDomain = safeDomain,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysisFocusX = it.arGraphAnalysisFocusX.coerceIn(safeDomain.xMin, safeDomain.xMax),
+                arGraphAnalysis = arMathEngine.analyze(compiled, it.arGraphAnalysisFocusX.coerceIn(safeDomain.xMin, safeDomain.xMax), comparison),
+                userMessage = UiMessage("AR graph domain updated.")
+            )
+        }
+    }
+
+    fun updateComparisonEquation(equation: String) {
+        _uiState.update {
+            val trimmed = equation.take(160)
+            val comparison = arMathEngine.compile(
+                source = trimmed,
+                existingSliders = it.arGraphSliders,
+                domain = it.arGraphDomain,
+                qualityPreset = it.arGraphQualityPreset
+            )
+            it.copy(
+                comparisonEquation = trimmed,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = arMathEngine.analyze(it.compiledArExpression, it.arGraphAnalysisFocusX, comparison),
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.RootVisualizer,
+                userMessage = UiMessage("Comparison graph updated.")
+            )
+        }
+    }
+
+    fun setArGraphAnalysisFocus(progress: Float) {
+        _uiState.update {
+            val x = it.arGraphDomain.xMin + (it.arGraphDomain.xMax - it.arGraphDomain.xMin) * progress.coerceIn(0f, 1f)
+            it.copy(
+                arGraphAnalysisFocusX = x,
+                arGraphAnalysis = arMathEngine.analyze(it.compiledArExpression, x, it.compiledComparisonExpression),
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.TangentNormalTool,
+                userMessage = UiMessage("Tangent focus x=${"%.2f".format(x)}")
             )
         }
     }
@@ -415,7 +574,7 @@ class ArViewerViewModel : ViewModel() {
         _uiState.update {
             val index = it.pickedPoints.size + 1
             val x = -1f + index * 0.5f
-            val y = equationValue(it.liveEquation, x)
+            val y = arMathEngine.evaluate2d(it.compiledArExpression, x.toDouble()).toFloatOrZero()
             val point = ArPointLabel("P$index (${ "%.1f".format(x) }, ${ "%.2f".format(y) })", x, y, 0f)
             it.copy(
                 pickedPoints = (it.pickedPoints + point).takeLast(6),
@@ -429,17 +588,22 @@ class ArViewerViewModel : ViewModel() {
     fun addPointLabelAt(worldX: Float, worldY: Float, worldZ: Float) {
         _uiState.update {
             val index = it.pickedPoints.size + 1
+            val raw = Vector3Value(worldX.toDouble(), worldY.toDouble(), worldZ.toDouble())
+            val snap = arInteractionEngine.snapWorldPoint(raw, it.snapProfile(), it.graphSnapCandidates())
+            val graphPoint = arInteractionEngine.pickGraphPoint(it.compiledArExpression, snap.position)
             val point = ArPointLabel(
-                label = "P$index (${ "%.2f".format(worldX) }, ${ "%.2f".format(worldY) }, ${ "%.2f".format(worldZ) })",
-                x = worldX,
-                y = worldY,
-                z = worldZ
+                label = "P$index ${graphPoint.label}",
+                x = snap.position.x.toFloat(),
+                y = snap.position.y.toFloat(),
+                z = snap.position.z.toFloat()
             )
             it.copy(
                 pickedPoints = (it.pickedPoints + point).takeLast(6),
+                pickedGraphPoints = (it.pickedGraphPoints + graphPoint).takeLast(6),
+                lastSnapResult = snap,
                 enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.PointPicker,
                 labelsVisible = true,
-                userMessage = UiMessage("Picked ${point.label}.")
+                userMessage = UiMessage("Picked ${point.label}${if (snap.snapped) " snapped to ${snap.label}" else ""}.")
             )
         }
     }
@@ -460,19 +624,37 @@ class ArViewerViewModel : ViewModel() {
     fun addRulerAnchorAt(worldX: Float, worldY: Float, worldZ: Float) {
         _uiState.update {
             val index = (it.rulerAnchors.size % 2) + 1
-            val anchor = ArPointLabel("R$index", worldX, worldY, worldZ)
+            val raw = Vector3Value(worldX.toDouble(), worldY.toDouble(), worldZ.toDouble())
+            val snap = arInteractionEngine.snapWorldPoint(raw, it.snapProfile(), it.graphSnapCandidates())
+            val anchor = ArPointLabel("R$index", snap.position.x.toFloat(), snap.position.y.toFloat(), snap.position.z.toFloat())
+            val anchors = (it.rulerAnchors + anchor).takeLast(2)
+            val measurement = if (anchors.size == 2) {
+                arInteractionEngine.rulerMeasurement(
+                    Vector3Value(anchors[0].x.toDouble(), anchors[0].y.toDouble(), anchors[0].z.toDouble()),
+                    Vector3Value(anchors[1].x.toDouble(), anchors[1].y.toDouble(), anchors[1].z.toDouble())
+                )
+            } else {
+                null
+            }
             it.copy(
-                rulerAnchors = (it.rulerAnchors + anchor).takeLast(2),
+                rulerAnchors = anchors,
+                rulerMeasurement = measurement,
+                lastSnapResult = snap,
                 enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.MeasurementRulerAnchors,
                 measurementsVisible = true,
-                userMessage = UiMessage("Ruler anchor ${anchor.label} placed.")
+                userMessage = UiMessage("Ruler anchor ${anchor.label} placed${if (snap.snapped) " on ${snap.label}" else ""}.")
             )
         }
     }
 
     fun recordPlacementPoint(worldX: Float, worldY: Float, worldZ: Float) {
         _uiState.update {
-            it.copy(lastPlacementPoint = ArPointLabel("anchor", worldX, worldY, worldZ))
+            val raw = Vector3Value(worldX.toDouble(), worldY.toDouble(), worldZ.toDouble())
+            val snap = arInteractionEngine.snapWorldPoint(raw, it.snapProfile(), it.graphSnapCandidates())
+            it.copy(
+                lastPlacementPoint = ArPointLabel("anchor", snap.position.x.toFloat(), snap.position.y.toFloat(), snap.position.z.toFloat()),
+                lastSnapResult = snap
+            )
         }
     }
 
@@ -483,6 +665,122 @@ class ArViewerViewModel : ViewModel() {
                 compareModeEnabled = true,
                 enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.CompareMode
             )
+        }
+    }
+
+    fun selectGestureHandle(handle: ArGestureHandle) {
+        _uiState.update {
+            it.copy(
+                selectedGestureHandle = handle,
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.GestureHandles,
+                sceneInteractionMode = when (handle) {
+                    ArGestureHandle.RotateY -> SceneInteractionMode.Rotate
+                    ArGestureHandle.UniformScale,
+                    ArGestureHandle.StretchX,
+                    ArGestureHandle.StretchZ -> SceneInteractionMode.Scale
+                    else -> SceneInteractionMode.Move
+                },
+                userMessage = UiMessage("${handle.label} handle selected.")
+            )
+        }
+    }
+
+    fun setTransformHandleStep(step: Float) {
+        _uiState.update { it.copy(transformHandleStep = step.coerceIn(0.01f, 0.3f)) }
+    }
+
+    fun applySelectedGestureHandle(direction: Float = 1f) {
+        val current = _uiState.value
+        val objectId = current.mathScene.primarySelectedObject?.id ?: return
+        val step = current.transformHandleStep.toDouble() * direction.toDouble()
+        val before = current.mathScene
+        val result = when (current.selectedGestureHandle) {
+            ArGestureHandle.MoveX -> DefaultObjectTransformService.move(before, objectId, TransformMovement(Vector3Value(step, 0.0, 0.0)))
+            ArGestureHandle.MoveY,
+            ArGestureHandle.Lift -> DefaultObjectTransformService.move(before, objectId, TransformMovement(Vector3Value(0.0, step, 0.0)))
+            ArGestureHandle.MoveZ -> DefaultObjectTransformService.move(before, objectId, TransformMovement(Vector3Value(0.0, 0.0, step)))
+            ArGestureHandle.RotateY -> DefaultObjectTransformService.rotate(before, objectId, TransformRotation(yDegrees = step * 240.0))
+            ArGestureHandle.UniformScale -> DefaultObjectTransformService.scale(before, objectId, TransformScaling(1.0 + step))
+            ArGestureHandle.StretchX -> DefaultObjectTransformService.scale(before, objectId, TransformScaling(1.0 + step, 1.0, 1.0))
+            ArGestureHandle.StretchZ -> DefaultObjectTransformService.scale(before, objectId, TransformScaling(1.0, 1.0, 1.0 + step))
+        }
+        val success = result as? com.indianservers.ai_stem.domain.scene.SceneMutationResult.Success ?: return
+        setSceneWithHistory(before, success.scene, current.selectedGestureHandle.label, success.message)
+        _uiState.update {
+            it.copy(
+                placedObject = it.mathScene.primarySelectedObject?.let { obj ->
+                    PlacedMathObject(
+                        id = obj.id,
+                        type = obj.objectType,
+                        rotationDegrees = obj.transform.rotation.y.toFloat(),
+                        scaleFactor = obj.transform.scale.x.toFloat(),
+                        selected = obj.interactionState.selected,
+                        transformRevision = (it.placedObject?.transformRevision ?: 0) + 1
+                    )
+                },
+                userMessage = UiMessage("${current.selectedGestureHandle.label} applied.")
+            )
+        }
+    }
+
+    fun addConstructionPointFromSelection() {
+        _uiState.update {
+            val position = when {
+                it.pickedGraphPoints.isNotEmpty() -> it.pickedGraphPoints.last().worldPosition
+                it.rulerAnchors.isNotEmpty() -> it.rulerAnchors.last().let { anchor -> Vector3Value(anchor.x.toDouble(), anchor.y.toDouble(), anchor.z.toDouble()) }
+                it.lastPlacementPoint != null -> Vector3Value(it.lastPlacementPoint.x.toDouble(), it.lastPlacementPoint.y.toDouble(), it.lastPlacementPoint.z.toDouble())
+                else -> Vector3Value((it.constructionGeometry.points.size % 3) * 0.12, 0.02, (it.constructionGeometry.points.size / 3) * 0.12)
+            }
+            val construction = constructionEngine.addPoint(it.constructionGeometry, position)
+            it.copy(
+                constructionGeometry = construction,
+                resolvedConstructions = constructionEngine.resolve(construction),
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.MultiObjectConstraints,
+                labelsVisible = true,
+                userMessage = UiMessage("Construction point added.")
+            )
+        }
+    }
+
+    fun createConstructionLine() = updateConstruction("Line through points") { constructionEngine.createLineThroughSelected(it) }
+    fun createConstructionSegment() = updateConstruction("Segment through points") { constructionEngine.createSegmentThroughSelected(it) }
+    fun createConstructionVector() = updateConstruction("Vector AB") { constructionEngine.createVectorBetweenSelected(it) }
+    fun createConstructionPlane() = updateConstruction("Plane through 3 points") { constructionEngine.createPlaneThroughSelected(it) }
+    fun createConstructionCircle() = updateConstruction("Circle from center + point") { constructionEngine.createCircleFromSelected(it) }
+    fun createConstructionPolygon() = updateConstruction("Polygon through points") { constructionEngine.createPolygonFromSelected(it) }
+    fun createConstructionMidpoint() = updateConstruction("Midpoint") { constructionEngine.createMidpoint(it) }
+    fun createConstructionParallel() = updateConstruction("Parallel through point") { constructionEngine.createParallelThroughSelected(it) }
+    fun createConstructionPerpendicular() = updateConstruction("Perpendicular through point") { constructionEngine.createPerpendicularThroughSelected(it) }
+
+    fun addConstructionConstraint(kind: ConstructionConstraintKind) {
+        _uiState.update {
+            val objectIds = it.constructionGeometry.objects.takeLast(2).map { obj -> obj.id }
+            if (objectIds.isEmpty()) {
+                it.copy(userMessage = UiMessage("Create construction objects before adding constraints."))
+            } else {
+                val construction = constructionEngine.addConstraint(it.constructionGeometry, kind, objectIds)
+                it.copy(
+                    constructionGeometry = construction,
+                    resolvedConstructions = constructionEngine.resolve(construction),
+                    enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.MultiObjectConstraints,
+                    userMessage = UiMessage("${kind.name.lowercase().replaceFirstChar { ch -> ch.uppercase() }} constraint added.")
+                )
+            }
+        }
+    }
+
+    private fun updateConstruction(message: String, block: (com.indianservers.ai_stem.domain.geometry.ConstructionGeometryState) -> com.indianservers.ai_stem.domain.geometry.ConstructionGeometryState) {
+        _uiState.update {
+            runCatching { block(it.constructionGeometry) }
+                .map { construction ->
+                    it.copy(
+                        constructionGeometry = construction,
+                        resolvedConstructions = constructionEngine.resolve(construction),
+                        enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.MultiObjectConstraints,
+                        userMessage = UiMessage(message)
+                    )
+                }
+                .getOrElse { error -> it.copy(userMessage = UiMessage(error.message ?: "Add more construction points.")) }
         }
     }
 
@@ -582,6 +880,259 @@ class ArViewerViewModel : ViewModel() {
 
     fun acknowledgeCapture() {
         _uiState.update { it.copy(captureRequested = false, userMessage = UiMessage("AR capture overlay prepared.")) }
+    }
+
+    fun capturePersistentAnchor() {
+        _uiState.update { state ->
+            val anchor = state.productionAnchorRecord()
+            state.copy(
+                mathScene = state.mathScene.copy(persistentAnchor = anchor),
+                loadedSceneNeedsPlacement = false,
+                enabledMathArFeatures = state.enabledMathArFeatures + MathArFeature.ScenePersistence,
+                userMessage = UiMessage("${anchor.label} saved. ${anchor.restoreHint}")
+            )
+        }
+    }
+
+    fun setDepthOcclusionMode(mode: ArDepthOcclusionMode) {
+        _uiState.update { state ->
+            val settings = state.productionSettings().copy(depthMode = mode)
+            state.copy(
+                depthOcclusionMode = mode,
+                depthOcclusionPolishEnabled = mode != ArDepthOcclusionMode.Off,
+                enabledMathArFeatures = if (mode == ArDepthOcclusionMode.Off) {
+                    state.enabledMathArFeatures - MathArFeature.DepthOcclusion
+                } else {
+                    state.enabledMathArFeatures + MathArFeature.DepthOcclusion
+                },
+                mathScene = state.mathScene.copy(arProductionSettings = settings),
+                userMessage = UiMessage("${mode.label()} selected for AR depth.")
+            )
+        }
+    }
+
+    fun setPerformanceProfile(profile: ArPerformanceProfile) {
+        _uiState.update { state ->
+            val quality = profile.toGraphQualityPreset()
+            val compiled = arMathEngine.compile(
+                source = state.liveEquation,
+                existingSliders = state.arGraphSliders,
+                domain = state.arGraphDomain,
+                qualityPreset = quality
+            )
+            val comparison = arMathEngine.compile(
+                source = state.comparisonEquation,
+                existingSliders = state.arGraphSliders,
+                domain = state.arGraphDomain,
+                qualityPreset = quality
+            )
+            val settings = state.productionSettings().copy(performanceProfile = profile)
+            state.copy(
+                performanceProfile = profile,
+                arGraphQualityPreset = quality,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = arMathEngine.analyze(compiled, state.arGraphAnalysisFocusX, comparison),
+                mathScene = state.mathScene.copy(arProductionSettings = settings),
+                userMessage = UiMessage("${profile.label()} production profile applied.")
+            )
+        }
+    }
+
+    fun setMeshDensity(value: Float) {
+        _uiState.update { state ->
+            val density = value.coerceIn(0.1f, 1f)
+            val settings = state.productionSettings().copy(meshDensity = density)
+            state.copy(
+                meshDensity = density,
+                mathScene = state.mathScene.copy(arProductionSettings = settings),
+                userMessage = UiMessage("Mesh density ${(density * 100f).toInt()}%.")
+            )
+        }
+    }
+
+    fun setMaxSceneObjects(value: Float) {
+        _uiState.update { state ->
+            val maxObjects = value.toInt().coerceIn(4, 128)
+            val settings = state.productionSettings().copy(maxSceneObjects = maxObjects)
+            state.copy(
+                maxSceneObjects = maxObjects,
+                mathScene = state.mathScene.copy(arProductionSettings = settings),
+                userMessage = UiMessage("Scene object budget set to $maxObjects.")
+            )
+        }
+    }
+
+    fun markScreenshotReady() {
+        _uiState.update { state ->
+            val settings = state.productionSettings().copy(screenshotReady = true)
+            state.copy(
+                captureRequested = true,
+                mathScene = state.mathScene.copy(arProductionSettings = settings),
+                userMessage = UiMessage("Scene staged for screenshot/export.")
+            )
+        }
+    }
+
+    fun exportArScenePackage() {
+        _uiState.update { state ->
+            val scene = state.sceneWithProductionState()
+            val sharePackage = arSceneShareExporter.export(
+                scene = scene,
+                equation = state.liveEquation,
+                comparisonEquation = state.comparisonEquation,
+                constructionCount = state.constructionGeometry.objects.size,
+                graphQuality = state.arGraphQualityPreset.label(),
+                colorMap = state.graphColorMap.label
+            )
+            state.copy(
+                mathScene = scene,
+                exportedScenePackage = sharePackage,
+                enabledMathArFeatures = state.enabledMathArFeatures + MathArFeature.ScenePersistence,
+                userMessage = UiMessage("Export package ready: ${sharePackage.fileName}")
+            )
+        }
+    }
+
+    fun clearExportPackage() {
+        _uiState.update { it.copy(exportedScenePackage = null) }
+    }
+
+    fun applyArSceneTemplate(templateId: String) {
+        val template = ArSceneTemplates.templates.firstOrNull { it.id == templateId } ?: return
+        _uiState.update { state ->
+            val mode = template.engineMode.toArEngineMode()
+            val quality = template.performanceProfile.toGraphQualityPreset()
+            val compiled = arMathEngine.compile(
+                source = template.equation,
+                existingSliders = state.arGraphSliders,
+                domain = state.arGraphDomain,
+                qualityPreset = quality
+            )
+            val comparison = arMathEngine.compile(
+                source = template.comparisonEquation,
+                existingSliders = compiled.parameters,
+                domain = state.arGraphDomain,
+                qualityPreset = quality
+            )
+            val settings = state.productionSettings().copy(
+                depthMode = template.depthMode,
+                performanceProfile = template.performanceProfile
+            )
+            state.copy(
+                selectedTemplateId = template.id,
+                arEngineMode = mode,
+                mathArExperience = mode.toMathArExperience(),
+                liveEquation = template.equation,
+                comparisonEquation = template.comparisonEquation,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = arMathEngine.analyze(compiled, state.arGraphAnalysisFocusX, comparison),
+                arGraphSliders = compiled.parameters,
+                arGraphQualityPreset = quality,
+                depthOcclusionMode = template.depthMode,
+                depthOcclusionPolishEnabled = template.depthMode != ArDepthOcclusionMode.Off,
+                performanceProfile = template.performanceProfile,
+                graphAnimationEnabled = template.id in setOf("volume-builder", "vector-field-lab"),
+                slicePlaneVisible = template.id == "paper-graph-lab",
+                mathScene = state.mathScene.copy(arProductionSettings = settings),
+                enabledMathArFeatures = state.enabledMathArFeatures + setOf(
+                    MathArFeature.ScenePersistence,
+                    MathArFeature.PrecisionConfidenceHud
+                ) + if (template.depthMode != ArDepthOcclusionMode.Off) setOf(MathArFeature.DepthOcclusion) else emptySet(),
+                userMessage = UiMessage("${template.title} template loaded.")
+            )
+        }
+    }
+
+    fun selectArWorkflow(workflowId: String) {
+        val template = ArWorkflowTemplates.templates.firstOrNull { it.id == workflowId } ?: return
+        _uiState.update { state ->
+            val mode = template.recommendedMode.toArEngineMode()
+            val compiled = arMathEngine.compile(
+                source = template.equation,
+                existingSliders = state.arGraphSliders,
+                domain = state.arGraphDomain,
+                qualityPreset = state.arGraphQualityPreset
+            )
+            val comparison = arMathEngine.compile(
+                source = template.comparisonEquation,
+                existingSliders = compiled.parameters,
+                domain = state.arGraphDomain,
+                qualityPreset = state.arGraphQualityPreset
+            )
+            val progress = ArWorkflowProgress(templateId = workflowId)
+            val nextState = state.copy(
+                activeWorkflowId = workflowId,
+                workflowProgress = progress,
+                arEngineMode = mode,
+                mathArExperience = mode.toMathArExperience(),
+                liveEquation = template.equation,
+                comparisonEquation = template.comparisonEquation,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = arMathEngine.analyze(compiled, state.arGraphAnalysisFocusX, comparison),
+                arGraphSliders = compiled.parameters,
+                selectedFeaturePhase = ArFeaturePhase.WorkflowStudio,
+                enabledMathArFeatures = state.enabledMathArFeatures + setOf(
+                    MathArFeature.GuidedWorkflow,
+                    MathArFeature.PrecisionConfidenceHud
+                ),
+                userMessage = UiMessage("${template.title} workflow started.")
+            )
+            nextState.copy(workflowEvaluation = arWorkflowEngine.evaluate(template, progress, nextState.workflowSignal()))
+        }
+    }
+
+    fun completeWorkflowStep() {
+        _uiState.update { state ->
+            val template = state.activeWorkflowTemplate()
+            val progress = arWorkflowEngine.completeCurrent(state.workflowProgress, template)
+            state.copy(
+                workflowProgress = progress,
+                workflowEvaluation = arWorkflowEngine.evaluate(template, progress, state.workflowSignal()),
+                enabledMathArFeatures = state.enabledMathArFeatures + MathArFeature.GuidedWorkflow,
+                userMessage = UiMessage(progress.currentStep(template)?.title ?: "Workflow complete.")
+            )
+        }
+    }
+
+    fun advanceWorkflowStep() {
+        _uiState.update { state ->
+            val template = state.activeWorkflowTemplate()
+            val progress = arWorkflowEngine.advance(state.workflowProgress, template)
+            state.copy(
+                workflowProgress = progress,
+                workflowEvaluation = arWorkflowEngine.evaluate(template, progress, state.workflowSignal()),
+                userMessage = UiMessage(progress.currentStep(template)?.actionHint ?: "Workflow complete.")
+            )
+        }
+    }
+
+    fun refreshWorkflowEvaluation() {
+        _uiState.update { state ->
+            val template = state.activeWorkflowTemplate()
+            state.copy(workflowEvaluation = arWorkflowEngine.evaluate(template, state.workflowProgress, state.workflowSignal()))
+        }
+    }
+
+    fun exportArActivityPackage() {
+        _uiState.update { state ->
+            val template = state.activeWorkflowTemplate()
+            val evaluation = arWorkflowEngine.evaluate(template, state.workflowProgress, state.workflowSignal())
+            val activity = arWorkflowEngine.exportActivity(
+                template = template,
+                progress = state.workflowProgress,
+                evaluation = evaluation,
+                scenePackage = state.exportedScenePackage
+            )
+            state.copy(
+                workflowEvaluation = evaluation,
+                exportedActivityPackage = activity,
+                enabledMathArFeatures = state.enabledMathArFeatures + setOf(MathArFeature.ActivityExport, MathArFeature.EvidenceRecorder),
+                userMessage = UiMessage("Activity package ready: ${activity.fileName}")
+            )
+        }
     }
 
     fun onRuntimeError(stage: String, throwable: Throwable) {
@@ -733,9 +1284,15 @@ class ArViewerViewModel : ViewModel() {
 
     fun saveScene(name: String = _uiState.value.mathScene.name) {
         val repository = sceneRepository ?: return
-        when (val result = repository.save(_uiState.value.mathScene, name)) {
+        val sceneToSave = _uiState.value.sceneWithProductionState()
+        when (val result = repository.save(sceneToSave, name)) {
             is SceneStorageResult.Success -> _uiState.update {
-                it.copy(mathScene = result.scene, savedScenes = repository.listScenes(), userMessage = UiMessage("Scene saved"))
+                it.copy(
+                    mathScene = result.scene,
+                    savedScenes = repository.listScenes(),
+                    enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.ScenePersistence,
+                    userMessage = UiMessage("Scene saved with AR production settings")
+                )
             }
             is SceneStorageResult.Failure -> _uiState.update { it.copy(userMessage = UiMessage(result.userMessage)) }
         }
@@ -745,11 +1302,19 @@ class ArViewerViewModel : ViewModel() {
         val repository = sceneRepository ?: return
         when (val result = repository.load(sceneId)) {
             is SceneStorageResult.Success -> _uiState.update {
+                val production = result.scene.arProductionSettings
                 it.copy(
                     mathScene = result.scene,
                     loadedSceneNeedsPlacement = true,
                     savedScenesVisible = false,
-                    userMessage = UiMessage("Tap a surface to place this scene")
+                    depthOcclusionMode = production.depthMode,
+                    depthOcclusionPolishEnabled = production.depthMode != ArDepthOcclusionMode.Off,
+                    performanceProfile = production.performanceProfile,
+                    meshDensity = production.meshDensity,
+                    maxSceneObjects = production.maxSceneObjects,
+                    enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.ScenePersistence +
+                        if (production.depthMode != ArDepthOcclusionMode.Off) setOf(MathArFeature.DepthOcclusion) else emptySet(),
+                    userMessage = UiMessage("${result.scene.persistentAnchor.restoreHint} Tap a surface to restore this scene.")
                 )
             }
             is SceneStorageResult.Failure -> _uiState.update { it.copy(userMessage = UiMessage(result.userMessage)) }
@@ -877,6 +1442,140 @@ private fun Function3dTransformMode.label(): String = when (this) {
     Function3dTransformMode.CrossSectionSlices -> "Cross-section slices"
 }
 
+private fun GraphQualityPreset.label(): String = when (this) {
+    GraphQualityPreset.BatterySaver -> "Battery saver"
+    GraphQualityPreset.Balanced -> "Balanced"
+    GraphQualityPreset.HighQuality -> "High quality"
+    GraphQualityPreset.Presentation -> "Presentation"
+}
+
+private fun Double.toFloatOrZero(): Float = if (isFinite()) toFloat() else 0f
+
+private fun ArViewerUiState.snapProfile(): ArSnappingProfile =
+    ArSnappingProfile(
+        enabled = snappingEnabled || coordinateGridLocked || MathArFeature.ObjectSnapping in enabledMathArFeatures,
+        gridStepMeters = if (coordinateGridLocked) 0.025 else 0.05,
+        axisToleranceMeters = if (coordinateGridLocked) 0.04 else 0.025,
+        graphToleranceMeters = 0.055
+    )
+
+private fun ArViewerUiState.graphSnapCandidates() =
+    arInteractionEngineForHelpers.graphSnapCandidates(compiledArExpression, arGraphAnalysis.highlightedPoints) +
+        listOf(
+            com.indianservers.ai_stem.domain.interaction.ArSnapCandidate(Vector3Value(), SnapKind.Origin, "Origin", priority = 8)
+        )
+
+private val arInteractionEngineForHelpers = ArInteractionEngine(ArMathEngine())
+
+private fun ArViewerUiState.activeWorkflowTemplate() =
+    ArWorkflowTemplates.templates.firstOrNull { it.id == activeWorkflowId }
+        ?: ArWorkflowTemplates.templates.first()
+
+private fun ArViewerUiState.workflowSignal(): ArWorkflowSignal =
+    ArWorkflowSignal(
+        mode = arEngineMode.name,
+        hasPlacedObject = mathScene.objects.isNotEmpty(),
+        placementScore = placementScore,
+        paperCalibrated = paperGraphCalibration.isComplete,
+        equationValid = compiledArExpression.isValid,
+        hasAnalysis = arGraphAnalysis.highlightedPoints.isNotEmpty() ||
+            arGraphAnalysis.tangent != null ||
+            arGraphAnalysis.integral != null,
+        pickedPointCount = pickedPoints.size + pickedGraphPoints.size,
+        rulerAnchorCount = rulerAnchors.size,
+        constructionObjectCount = constructionGeometry.objects.size,
+        anchorSaved = mathScene.persistentAnchor.kind != PersistentAnchorKind.SceneOrigin,
+        exportReady = exportedScenePackage != null || exportedActivityPackage != null,
+        depthEnabled = depthOcclusionMode != ArDepthOcclusionMode.Off || depthOcclusionPolishEnabled
+    )
+
+private fun ArViewerUiState.productionSettings(): ArSceneProductionSettings =
+    mathScene.arProductionSettings.copy(
+        depthMode = depthOcclusionMode,
+        performanceProfile = performanceProfile,
+        meshDensity = meshDensity.coerceIn(0.1f, 1f),
+        maxSceneObjects = maxSceneObjects.coerceIn(4, 128)
+    )
+
+private fun ArViewerUiState.sceneWithProductionState(): com.indianservers.ai_stem.domain.scene.MathScene =
+    mathScene.copy(
+        persistentAnchor = if (mathScene.persistentAnchor.kind == PersistentAnchorKind.SceneOrigin && lastPlacementPoint != null) {
+            productionAnchorRecord()
+        } else {
+            mathScene.persistentAnchor
+        },
+        arProductionSettings = productionSettings()
+    )
+
+private fun ArViewerUiState.productionAnchorRecord(): PersistentAnchorRecord {
+    val position = lastPlacementPoint?.let { Vector3Value(it.x.toDouble(), it.y.toDouble(), it.z.toDouble()) }
+        ?: mathScene.primarySelectedObject?.transform?.position
+        ?: Vector3Value()
+    val lockedImage = paperGraph?.trackedTargets?.firstOrNull()?.name
+    val kind = when {
+        arEngineMode == ArEngineMode.PaperGraph -> PersistentAnchorKind.PaperImage
+        arEngineMode == ArEngineMode.OutdoorGeospatialMath && placementHitKind == PlacementHitKind.StreetscapeGeometry -> PersistentAnchorKind.StreetscapeGeometry
+        arEngineMode == ArEngineMode.OutdoorGeospatialMath -> PersistentAnchorKind.Geospatial
+        placementHitKind in setOf(PlacementHitKind.Plane, PlacementHitKind.DepthPoint) -> PersistentAnchorKind.Plane
+        else -> PersistentAnchorKind.SceneOrigin
+    }
+    return PersistentAnchorRecord(
+        kind = kind,
+        engineMode = arEngineMode.name,
+        label = when (kind) {
+            PersistentAnchorKind.SceneOrigin -> "Scene origin anchor"
+            PersistentAnchorKind.Plane -> "Surface plane anchor"
+            PersistentAnchorKind.PaperImage -> "Paper graph image anchor"
+            PersistentAnchorKind.Geospatial -> "Outdoor geospatial anchor"
+            PersistentAnchorKind.StreetscapeGeometry -> "Building mesh anchor"
+        },
+        worldPosition = position,
+        imageTargetName = lockedImage ?: if (kind == PersistentAnchorKind.PaperImage) "AI STEM Paper Graph" else null,
+        accuracyMeters = when (placementQuality) {
+            PlacementQuality.Excellent -> 0.02
+            PlacementQuality.Good -> 0.05
+            PlacementQuality.Weak -> 0.15
+            PlacementQuality.Recovering -> 0.35
+            else -> null
+        }
+    )
+}
+
+private fun ArPerformanceProfile.toGraphQualityPreset(): GraphQualityPreset = when (this) {
+    ArPerformanceProfile.BatterySaver -> GraphQualityPreset.BatterySaver
+    ArPerformanceProfile.Balanced -> GraphQualityPreset.Balanced
+    ArPerformanceProfile.HighQuality -> GraphQualityPreset.HighQuality
+    ArPerformanceProfile.Presentation -> GraphQualityPreset.Presentation
+}
+
+private fun String.toArEngineMode(): ArEngineMode = when (this) {
+    "PaperGraph" -> ArEngineMode.PaperGraph
+    "OutdoorGeospatialMath" -> ArEngineMode.OutdoorGeospatialMath
+    "SurfacePlacement" -> ArEngineMode.SurfacePlacement
+    "AirPlacement" -> ArEngineMode.AirPlacement
+    else -> ArEngineMode.Indoor
+}
+
+private fun ArEngineMode.toMathArExperience(): MathArExperience = when (this) {
+    ArEngineMode.PaperGraph -> MathArExperience.MarkerBasedGraph
+    ArEngineMode.OutdoorGeospatialMath -> MathArExperience.OutdoorGeometry
+    else -> MathArExperience.MarkerlessObjects
+}
+
+private fun ArDepthOcclusionMode.label(): String = when (this) {
+    ArDepthOcclusionMode.Off -> "Depth off"
+    ArDepthOcclusionMode.SoftDepth -> "Soft depth"
+    ArDepthOcclusionMode.DepthTest -> "Depth test"
+    ArDepthOcclusionMode.GeospatialDepth -> "Geospatial depth"
+}
+
+private fun ArPerformanceProfile.label(): String = when (this) {
+    ArPerformanceProfile.BatterySaver -> "Battery saver"
+    ArPerformanceProfile.Balanced -> "Balanced"
+    ArPerformanceProfile.HighQuality -> "High quality"
+    ArPerformanceProfile.Presentation -> "Presentation"
+}
+
 private fun PaperGraphLayer.label(): String = when (this) {
     PaperGraphLayer.Axes -> "Axes"
     PaperGraphLayer.Scale -> "Scale"
@@ -889,6 +1588,7 @@ private fun ArFeaturePhase.label(): String = when (this) {
     ArFeaturePhase.DirectInteraction -> "Phase 1"
     ArFeaturePhase.GraphAnalysis -> "Phase 2"
     ArFeaturePhase.EngineStrengthening -> "Phase 3"
+    ArFeaturePhase.WorkflowStudio -> "Phase 6"
 }
 
 private fun MathArFeature.label(): String = when (this) {
@@ -907,6 +1607,9 @@ private fun MathArFeature.label(): String = when (this) {
     MathArFeature.ScenePersistence -> "Scene persistence"
     MathArFeature.PrecisionConfidenceHud -> "Precision HUD"
     MathArFeature.CompareMode -> "Compare mode"
+    MathArFeature.GuidedWorkflow -> "Guided workflow"
+    MathArFeature.ActivityExport -> "Activity export"
+    MathArFeature.EvidenceRecorder -> "Evidence recorder"
 }
 
 private fun equationValue(equation: String, x: Float): Float {

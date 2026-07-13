@@ -146,11 +146,24 @@ import com.indianservers.ai_stem.domain.mathematics.MathObjectDefinition
 import com.indianservers.ai_stem.domain.mathematics.MathParameterValue
 import com.indianservers.ai_stem.domain.mathematics.DefaultMathObjectRegistry
 import com.indianservers.ai_stem.domain.mathematics.MeasurementFormatter
-import com.indianservers.ai_stem.domain.mathematics.SineCurveSampler
 import com.indianservers.ai_stem.domain.mathematics.parameterNumber
+import com.indianservers.ai_stem.domain.graph.ArMathEngine
+import com.indianservers.ai_stem.domain.graph.ArGraphDomain
+import com.indianservers.ai_stem.domain.graph.GraphExpressionKind
+import com.indianservers.ai_stem.domain.graph.GraphQualityPreset
+import com.indianservers.ai_stem.domain.graph.ParseOutcome
+import com.indianservers.ai_stem.domain.geometry.ConstructionConstraintKind
+import com.indianservers.ai_stem.domain.geometry.ConstructionObjectKind
+import com.indianservers.ai_stem.domain.geometry.ResolvedConstructionObject
+import com.indianservers.ai_stem.domain.interaction.ArGestureHandle
+import com.indianservers.ai_stem.domain.scene.ArDepthOcclusionMode
+import com.indianservers.ai_stem.domain.scene.ArPerformanceProfile
+import com.indianservers.ai_stem.domain.scene.ArSceneTemplates
+import com.indianservers.ai_stem.domain.scene.ArWorkflowTemplates
 import com.indianservers.ai_stem.domain.scene.ExperienceMode
 import com.indianservers.ai_stem.domain.scene.MathSceneObject
 import com.indianservers.ai_stem.domain.scene.SceneInteractionMode
+import com.indianservers.ai_stem.domain.scene.Vector3Value
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.loaders.MaterialLoader
@@ -332,9 +345,41 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
                         onFeaturePhase = viewModel::selectFeaturePhase,
                         onToggleMathArFeature = viewModel::toggleMathArFeature,
                         onLiveEquation = viewModel::updateLiveEquation,
+                        onGraphSlider = viewModel::updateArGraphSlider,
+                        onGraphQuality = viewModel::setArGraphQualityPreset,
+                        onGraphDomain = viewModel::updateArGraphDomain,
+                        onComparisonEquation = viewModel::updateComparisonEquation,
+                        onAnalysisFocus = viewModel::setArGraphAnalysisFocus,
                         onAddPointLabel = viewModel::addGeneratedPointLabel,
                         onAddRulerAnchor = viewModel::addRulerAnchor,
                         onCompareOffset = viewModel::setCompareOffset,
+                        onGestureHandle = viewModel::selectGestureHandle,
+                        onTransformStep = viewModel::setTransformHandleStep,
+                        onApplyGestureHandle = viewModel::applySelectedGestureHandle,
+                        onAddConstructionPoint = viewModel::addConstructionPointFromSelection,
+                        onConstructionLine = viewModel::createConstructionLine,
+                        onConstructionSegment = viewModel::createConstructionSegment,
+                        onConstructionVector = viewModel::createConstructionVector,
+                        onConstructionPlane = viewModel::createConstructionPlane,
+                        onConstructionCircle = viewModel::createConstructionCircle,
+                        onConstructionPolygon = viewModel::createConstructionPolygon,
+                        onConstructionMidpoint = viewModel::createConstructionMidpoint,
+                        onConstructionParallel = viewModel::createConstructionParallel,
+                        onConstructionPerpendicular = viewModel::createConstructionPerpendicular,
+                        onConstructionConstraint = viewModel::addConstructionConstraint,
+                        onCapturePersistentAnchor = viewModel::capturePersistentAnchor,
+                        onDepthOcclusionMode = viewModel::setDepthOcclusionMode,
+                        onPerformanceProfile = viewModel::setPerformanceProfile,
+                        onMeshDensity = viewModel::setMeshDensity,
+                        onMaxSceneObjects = viewModel::setMaxSceneObjects,
+                        onMarkScreenshotReady = viewModel::markScreenshotReady,
+                        onExportArScene = viewModel::exportArScenePackage,
+                        onApplyArTemplate = viewModel::applyArSceneTemplate,
+                        onSelectArWorkflow = viewModel::selectArWorkflow,
+                        onCompleteWorkflowStep = viewModel::completeWorkflowStep,
+                        onAdvanceWorkflowStep = viewModel::advanceWorkflowStep,
+                        onRefreshWorkflow = viewModel::refreshWorkflowEvaluation,
+                        onExportArActivity = viewModel::exportArActivityPackage,
                         onCapture = viewModel::acknowledgeCapture,
                         onReplace = {
                             anchor?.detach()
@@ -786,6 +831,7 @@ private fun ArRuntime(
                             }
                         }
                     }
+                    ConstructionGeometryNodes(state, materialLoader)
                 }
             }
             outdoorMeshAnchor?.let { meshAnchor ->
@@ -1145,6 +1191,79 @@ private fun NodeScope.CompareGhostNode(type: MathObjectType, materialLoader: Mat
 }
 
 @Composable
+private fun NodeScope.ConstructionGeometryNodes(state: ArViewerUiState, materialLoader: MaterialLoader) {
+    if (MathArFeature.MultiObjectConstraints !in state.enabledMathArFeatures && state.resolvedConstructions.isEmpty()) return
+    val pointMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFF176)) }
+    val lineMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF6EDBFF)) }
+    val constraintMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFF8A65)) }
+    state.constructionGeometry.points.forEach { point ->
+        CubeNode(
+            size = Size(0.018f, 0.018f, 0.018f),
+            center = point.position.toPosition().copy(y = point.position.y.toFloat() + 0.024f),
+            materialInstance = pointMaterial
+        )
+    }
+    state.resolvedConstructions.filter { it.visible }.forEach { construction ->
+        val material = if (construction.kind in setOf(ConstructionObjectKind.Parallel, ConstructionObjectKind.Perpendicular)) constraintMaterial else lineMaterial
+        when (construction.kind) {
+            ConstructionObjectKind.Line,
+            ConstructionObjectKind.Segment,
+            ConstructionObjectKind.Ray,
+            ConstructionObjectKind.Vector,
+            ConstructionObjectKind.Parallel,
+            ConstructionObjectKind.Perpendicular -> {
+                if (construction.points.size >= 2) {
+                    LineNode(construction.points[0].toPosition(), construction.points[1].toPosition(), material)
+                    if (construction.kind == ConstructionObjectKind.Vector) {
+                        VectorHead(construction.points[0].toPosition(), construction.points[1].toPosition(), material)
+                    }
+                }
+            }
+            ConstructionObjectKind.Plane,
+            ConstructionObjectKind.Polygon -> {
+                construction.points.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(), b.toPosition(), material) }
+                if (construction.points.size > 2) LineNode(construction.points.last().toPosition(), construction.points.first().toPosition(), material)
+            }
+            ConstructionObjectKind.Circle -> {
+                if (construction.points.size >= 2) {
+                    val center = construction.points[0]
+                    val edge = construction.points[1]
+                    val radius = sqrt((center.x - edge.x) * (center.x - edge.x) + (center.z - edge.z) * (center.z - edge.z)).toFloat()
+                    val ring = (0..48).map { index ->
+                        val angle = index * (2f * PI.toFloat() / 48f)
+                        Position(center.x.toFloat() + cos(angle) * radius, center.y.toFloat() + 0.018f, center.z.toFloat() + sin(angle) * radius)
+                    }
+                    ring.zipWithNext().forEach { (a, b) -> LineNode(a, b, material) }
+                }
+            }
+            ConstructionObjectKind.Midpoint,
+            ConstructionObjectKind.Point,
+            ConstructionObjectKind.Intersection -> {
+                construction.points.forEach { point ->
+                    CubeNode(Size(0.022f, 0.022f, 0.022f), center = point.toPosition().copy(y = point.y.toFloat() + 0.028f), materialInstance = constraintMaterial)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NodeScope.VectorHead(start: Position, end: Position, material: MaterialInstance) {
+    val dx = end.x - start.x
+    val dz = end.z - start.z
+    val length = sqrt(dx * dx + dz * dz).coerceAtLeast(0.001f)
+    val ux = dx / length
+    val uz = dz / length
+    val size = 0.035f
+    val left = Position(end.x - ux * size - uz * size * 0.45f, end.y, end.z - uz * size + ux * size * 0.45f)
+    val right = Position(end.x - ux * size + uz * size * 0.45f, end.y, end.z - uz * size - ux * size * 0.45f)
+    LineNode(end, left, material)
+    LineNode(end, right, material)
+}
+
+private fun Vector3Value.toPosition(): Position = Position(x.toFloat(), y.toFloat() + 0.018f, z.toFloat())
+
+@Composable
 private fun NodeScope.CoordinatePlaneNode(lineMaterial: com.google.android.filament.MaterialInstance, pointMaterial: com.google.android.filament.MaterialInstance) {
     val range = -5..5
     range.forEach { i ->
@@ -1184,44 +1303,52 @@ private fun NodeScope.SineCurveNode(
     } else {
         1f
     }
-    val samples = SineCurveSampler.sample(64, phaseShift = phase, rangeMax = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * progress)
+    val samples = functionXSamples(state, 64, progress)
     samples.zipWithNext().forEachIndexed { index, (a, b) ->
-        val ay = functionValue(state, a.x, phase)
-        val by = functionValue(state, b.x, phase)
-        val material = graphSegmentMaterial(state, index, a.x, ay, by, palette)
+        val ay = functionValue(state, a, phase)
+        val by = functionValue(state, b, phase)
+        val material = graphSegmentMaterial(state, index, a, ay, by, palette)
         LineNode(
-            start = Position((a.x / (2f * PI.toFloat())) * 0.24f, 0.012f, ay * 0.08f),
-            end = Position((b.x / (2f * PI.toFloat())) * 0.24f, 0.012f, by * 0.08f),
+            start = Position(graphX(state, a), 0.012f, ay * 0.08f),
+            end = Position(graphX(state, b), 0.012f, by * 0.08f),
             materialInstance = material
         )
     }
     if (MathArFeature.RootVisualizer in state.enabledMathArFeatures) {
-        listOf(-PI.toFloat(), 0f, PI.toFloat()).forEach { root ->
-            CubeNode(Size(0.018f, 0.018f, 0.018f), center = Position((root / (2f * PI.toFloat())) * 0.24f, 0.028f, 0f), materialInstance = accent)
+        state.arGraphAnalysis.highlightedPoints.forEach { point ->
+            CubeNode(
+                Size(0.018f, 0.018f, 0.018f),
+                center = Position(graphX(state, point.x.toFloat()), 0.028f, point.y.toFloat().coerceIn(-1.6f, 1.6f) * 0.08f),
+                materialInstance = accent
+            )
         }
     }
     if (MathArFeature.AreaUnderCurve in state.enabledMathArFeatures) {
-        samples.filterIndexed { index, sample -> index % 8 == 0 && functionValue(state, sample.x, phase) > 0f }.forEach { sample ->
-            val x = (sample.x / (2f * PI.toFloat())) * 0.24f
-            val z = functionValue(state, sample.x, phase) * 0.08f
+        samples.filterIndexed { index, sample -> index % 8 == 0 && functionValue(state, sample, phase) > 0f }.forEach { sample ->
+            val x = graphX(state, sample)
+            val z = functionValue(state, sample, phase) * 0.08f
             LineNode(Position(x, 0.012f, 0f), Position(x, 0.012f, z), accent)
         }
     }
     if (state.graphAnimationEnabled && state.graphAnimationMode == GraphAnimationMode.BuildVolume || MathArFeature.VolumeBuilder in state.enabledMathArFeatures) {
         samples.filterIndexed { index, _ -> index % 8 == 0 }.forEach { sample ->
-            val x = (sample.x / (2f * PI.toFloat())) * 0.24f
-            val z = functionValue(state, sample.x, phase) * 0.08f
+            val x = graphX(state, sample)
+            val z = functionValue(state, sample, phase) * 0.08f
             LineNode(Position(x, 0.012f, z), Position(x, 0.12f * state.graphAnimationProgress, z), accent)
         }
     }
     if (state.graphAnimationEnabled && state.graphAnimationMode == GraphAnimationMode.MoveTangentPoint || MathArFeature.TangentNormalTool in state.enabledMathArFeatures) {
-        val xValue = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * state.graphAnimationProgress
-        val yValue = functionValue(state, xValue, phase)
-        val x = (xValue / (2f * PI.toFloat())) * 0.24f
+        val tangent = state.arGraphAnalysis.tangent
+        val xValue = tangent?.point?.x?.toFloat()
+            ?: (state.arGraphDomain.xMin.toFloat() + (state.arGraphDomain.xMax - state.arGraphDomain.xMin).toFloat() * state.graphAnimationProgress)
+        val yValue = tangent?.point?.y?.toFloat() ?: functionValue(state, xValue, phase)
+        val x = graphX(state, xValue)
         val z = yValue * 0.08f
+        val slope = tangent?.tangentSlope?.toFloat()?.coerceIn(-8f, 8f) ?: derivativeValue(state, xValue, phase)
+        val normalSlope = tangent?.normalSlope?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(-8f, 8f) ?: -1f / slope.coerceAwayFromZero()
         CubeNode(Size(0.028f, 0.028f, 0.028f), center = Position(x, 0.03f, z), materialInstance = accent)
-        LineNode(Position(x - 0.08f, 0.026f, z - cos(xValue) * 0.08f), Position(x + 0.08f, 0.026f, z + cos(xValue) * 0.08f), accent)
-        LineNode(Position(x - 0.045f, 0.026f, z + 0.08f), Position(x + 0.045f, 0.026f, z - 0.08f), lineMaterial)
+        LineNode(Position(x - 0.08f, 0.026f, z - slope * 0.08f), Position(x + 0.08f, 0.026f, z + slope * 0.08f), accent)
+        LineNode(Position(x - 0.045f, 0.026f, z - normalSlope * 0.045f), Position(x + 0.045f, 0.026f, z + normalSlope * 0.045f), lineMaterial)
     }
 }
 
@@ -1247,11 +1374,11 @@ private fun NodeScope.PaperGraphWorksheetNode(
         }
     }
     if (PaperGraphLayer.Graph in state.paperGraphLayers) {
-        val samples = functionXSamples(64, 1f)
+        val samples = functionXSamples(state, 64, 1f)
         samples.zipWithNext().forEachIndexed { index, (a, b) ->
             LineNode(
-                Position(graphX(a), 0.018f, functionValue(state, a, phase) * 0.085f),
-                Position(graphX(b), 0.018f, functionValue(state, b, phase) * 0.085f),
+                Position(graphX(state, a), 0.018f, functionValue(state, a, phase) * 0.085f),
+                Position(graphX(state, b), 0.018f, functionValue(state, b, phase) * 0.085f),
                 graphSegmentMaterial(state, index, a, functionValue(state, a, phase), functionValue(state, b, phase), palette)
             )
         }
@@ -1309,7 +1436,7 @@ private fun NodeScope.FunctionSurfaceNode(
     phase: Float
 ) {
     val progress = transformProgress(state)
-    val xSamples = functionXSamples(36, progress)
+    val xSamples = functionXSamples(state, 36, progress)
     val zSamples = (-4..4).map { it * 0.032f }
     zSamples.forEachIndexed { zIndex, z ->
         xSamples.zipWithNext().forEachIndexed { xIndex, (a, b) ->
@@ -1338,7 +1465,7 @@ private fun NodeScope.FunctionExtrusionNode(
     state: ArViewerUiState,
     phase: Float
 ) {
-    val xSamples = functionXSamples(42, transformProgress(state))
+    val xSamples = functionXSamples(state, 42, transformProgress(state))
     val depths = listOf(-0.07f, 0.07f)
     depths.forEach { z ->
         xSamples.zipWithNext().forEachIndexed { index, (a, b) ->
@@ -1348,9 +1475,9 @@ private fun NodeScope.FunctionExtrusionNode(
     xSamples.filterIndexed { index, _ -> index % 3 == 0 }.forEach { x ->
         val y = functionHeight(state, x, phase)
         depths.forEach { z ->
-            LineNode(Position(graphX(x), 0.012f, z), Position(graphX(x), y, z), accent)
+            LineNode(Position(graphX(state, x), 0.012f, z), Position(graphX(state, x), y, z), accent)
         }
-        LineNode(Position(graphX(x), y, depths.first()), Position(graphX(x), y, depths.last()), lineMaterial)
+        LineNode(Position(graphX(state, x), y, depths.first()), Position(graphX(state, x), y, depths.last()), lineMaterial)
     }
 }
 
@@ -1362,14 +1489,14 @@ private fun NodeScope.FunctionRevolutionNode(
     state: ArViewerUiState,
     phase: Float
 ) {
-    val xSamples = functionXSamples(26, transformProgress(state))
+    val xSamples = functionXSamples(state, 26, transformProgress(state))
     val angleSamples = (0..16).map { it * (2f * PI.toFloat() / 16f) }
     xSamples.forEachIndexed { index, x ->
         val radius = 0.025f + abs(functionValue(state, x, phase)) * 0.085f
         angleSamples.zipWithNext().forEach { (a, b) ->
             LineNode(
-                Position(graphX(x), 0.09f + radius * cos(a), radius * sin(a)),
-                Position(graphX(x), 0.09f + radius * cos(b), radius * sin(b)),
+                Position(graphX(state, x), 0.09f + radius * cos(a), radius * sin(a)),
+                Position(graphX(state, x), 0.09f + radius * cos(b), radius * sin(b)),
                 graphSegmentMaterial(state, index, x, radius, radius * cos(a), palette)
             )
         }
@@ -1379,8 +1506,8 @@ private fun NodeScope.FunctionRevolutionNode(
             val ra = 0.025f + abs(functionValue(state, a, phase)) * 0.085f
             val rb = 0.025f + abs(functionValue(state, b, phase)) * 0.085f
             LineNode(
-                Position(graphX(a), 0.09f + ra * cos(angle), ra * sin(angle)),
-                Position(graphX(b), 0.09f + rb * cos(angle), rb * sin(angle)),
+                Position(graphX(state, a), 0.09f + ra * cos(angle), ra * sin(angle)),
+                Position(graphX(state, b), 0.09f + rb * cos(angle), rb * sin(angle)),
                 accent
             )
         }
@@ -1396,22 +1523,22 @@ private fun NodeScope.FunctionTangentPlaneNode(
     phase: Float
 ) {
     FunctionSurfaceNode(lineMaterial, accent, palette, state.copy(graphAnimationProgress = 1f), phase)
-    val x0 = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * state.graphAnimationProgress.coerceIn(0f, 1f)
+    val x0 = state.arGraphDomain.xMin.toFloat() + (state.arGraphDomain.xMax - state.arGraphDomain.xMin).toFloat() * state.graphAnimationProgress.coerceIn(0f, 1f)
     val f0 = functionHeight(state, x0, phase)
-    val slope = cos(x0 + phase) * 0.045f
+    val slope = derivativeValue(state, x0, phase) * 0.045f
     val xOffsets = (-3..3).map { it * 0.026f }
     val zOffsets = (-3..3).map { it * 0.026f }
     xOffsets.forEach { dx ->
         zOffsets.zipWithNext().forEach { (za, zb) ->
-            LineNode(tangentPlanePoint(x0, f0, slope, dx, za), tangentPlanePoint(x0, f0, slope, dx, zb), accent)
+            LineNode(tangentPlanePoint(state, x0, f0, slope, dx, za), tangentPlanePoint(state, x0, f0, slope, dx, zb), accent)
         }
     }
     zOffsets.forEach { z ->
         xOffsets.zipWithNext().forEach { (a, b) ->
-            LineNode(tangentPlanePoint(x0, f0, slope, a, z), tangentPlanePoint(x0, f0, slope, b, z), accent)
+            LineNode(tangentPlanePoint(state, x0, f0, slope, a, z), tangentPlanePoint(state, x0, f0, slope, b, z), accent)
         }
     }
-    CubeNode(Size(0.022f, 0.022f, 0.022f), center = Position(graphX(x0), f0, 0f), materialInstance = accent)
+    CubeNode(Size(0.022f, 0.022f, 0.022f), center = Position(graphX(state, x0), f0, 0f), materialInstance = accent)
 }
 
 @Composable
@@ -1424,45 +1551,60 @@ private fun NodeScope.FunctionCrossSectionNode(
 ) {
     FunctionSurfaceNode(lineMaterial, accent, palette, state.copy(graphAnimationProgress = 1f), phase)
     val z = -0.128f + 0.256f * state.graphSlicePosition.coerceIn(0f, 1f)
-    val xSamples = functionXSamples(42, 1f)
+    val xSamples = functionXSamples(state, 42, 1f)
     xSamples.zipWithNext().forEach { (a, b) ->
         LineNode(graphPoint(state, a, z, phase), graphPoint(state, b, z, phase), accent)
     }
     xSamples.filterIndexed { index, _ -> index % 6 == 0 }.forEach { x ->
-        LineNode(Position(graphX(x), 0.012f, z), graphPoint(state, x, z, phase), accent)
+        LineNode(Position(graphX(state, x), 0.012f, z), graphPoint(state, x, z, phase), accent)
     }
     LineNode(Position(-0.24f, 0.012f, z), Position(0.24f, 0.012f, z), accent)
 }
 
-private fun functionXSamples(segments: Int, progress: Float): List<Float> {
-    val rangeMin = SineCurveSampler.minX
-    val rangeMax = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * progress.coerceIn(0.08f, 1f)
+private fun functionXSamples(state: ArViewerUiState, segments: Int, progress: Float): List<Float> {
+    val rangeMin = state.arGraphDomain.xMin.toFloat()
+    val fullRangeMax = state.arGraphDomain.xMax.toFloat()
+    val rangeMax = rangeMin + (fullRangeMax - rangeMin) * progress.coerceIn(0.08f, 1f)
     val step = (rangeMax - rangeMin) / segments
     return (0..segments).map { rangeMin + step * it }
 }
 
-private fun graphX(x: Float): Float = (x / (2f * PI.toFloat())) * 0.24f
+private val arRenderMathEngine = ArMathEngine()
 
-private fun functionValue(state: ArViewerUiState, x: Float, phase: Float): Float {
-    val clean = state.liveEquation.lowercase().replace(" ", "")
-    val shifted = x + phase
-    return when {
-        "cos" in clean -> cos(shifted)
-        "x^2" in clean || "x2" in clean || "parabola" in clean -> ((x / PI.toFloat()) * (x / PI.toFloat()) - 1f).coerceIn(-1.25f, 1.25f)
-        "2x" in clean || "2*x" in clean -> (2f * x / PI.toFloat()).coerceIn(-1.25f, 1.25f)
-        "0.5x" in clean || "0.5*x" in clean -> (0.5f * x / PI.toFloat()).coerceIn(-1.25f, 1.25f)
-        clean.contains("x") && !clean.contains("sin") -> (x / PI.toFloat()).coerceIn(-1.25f, 1.25f)
-        else -> sin(shifted)
+private fun graphX(state: ArViewerUiState, x: Float): Float {
+    val min = state.arGraphDomain.xMin.toFloat()
+    val max = state.arGraphDomain.xMax.toFloat()
+    return (((x - min) / (max - min)) - 0.5f) * 0.48f
+}
+
+private fun functionValue(state: ArViewerUiState, x: Float, phase: Float): Float =
+    arRenderMathEngine.evaluate2d(state.compiledArExpression, x.toDouble(), phase.toDouble()).toArFloat()
+
+private fun functionSurfaceValue(state: ArViewerUiState, x: Float, y: Float, phase: Float): Float {
+    val compiled = state.compiledArExpression
+    return if (compiled.kind == GraphExpressionKind.ExplicitSurface3D) {
+        arRenderMathEngine.evaluate3d(compiled, x.toDouble(), y.toDouble(), phase.toDouble()).toArFloat()
+    } else {
+        functionValue(state, x, phase) + (y / 0.032f) * 0.08f
     }
+}
+
+private fun derivativeValue(state: ArViewerUiState, x: Float, phase: Float): Float {
+    val h = 0.025f
+    val left = functionValue(state, x - h, phase)
+    val right = functionValue(state, x + h, phase)
+    return ((right - left) / (2f * h)).coerceIn(-8f, 8f)
 }
 
 private fun functionHeight(state: ArViewerUiState, x: Float, phase: Float): Float = 0.08f + functionValue(state, x, phase) * 0.06f
 
 private fun graphPoint(state: ArViewerUiState, x: Float, z: Float, phase: Float): Position =
-    Position(graphX(x), functionHeight(state, x, phase), z)
+    Position(graphX(state, x), 0.08f + functionSurfaceValue(state, x, z / 0.032f, phase) * 0.04f, z)
 
-private fun tangentPlanePoint(x0: Float, f0: Float, slope: Float, dx: Float, z: Float): Position =
-    Position(graphX(x0) + dx, f0 + dx * slope + z * 0.12f, z)
+private fun Double.toArFloat(): Float = if (isFinite()) toFloat().coerceIn(-1.6f, 1.6f) else 0f
+
+private fun tangentPlanePoint(state: ArViewerUiState, x0: Float, f0: Float, slope: Float, dx: Float, z: Float): Position =
+    Position(graphX(state, x0) + dx, f0 + dx * slope + z * 0.12f, z)
 
 private fun transformProgress(state: ArViewerUiState): Float =
     if (state.graphAnimationEnabled && state.graphAnimationMode in setOf(GraphAnimationMode.SweepArea, GraphAnimationMode.BuildVolume)) {
@@ -1482,8 +1624,8 @@ private fun graphSegmentMaterial(
     val normalized = when (state.graphColorMap) {
         GraphColorMap.Height -> ((yValue + 1f) / 2f).coerceIn(0f, 1f)
         GraphColorMap.Slope -> (abs(nextYValue - yValue) * 2.8f).coerceIn(0f, 1f)
-        GraphColorMap.Curvature -> (abs(sin(xValue) * cos(xValue)) * 1.7f).coerceIn(0f, 1f)
-        GraphColorMap.XValue -> ((xValue - SineCurveSampler.minX) / (SineCurveSampler.maxX - SineCurveSampler.minX)).coerceIn(0f, 1f)
+        GraphColorMap.Curvature -> abs(nextYValue - 2f * yValue + functionValue(state, xValue - 0.04f, 0f)).coerceIn(0f, 1f)
+        GraphColorMap.XValue -> ((xValue - state.arGraphDomain.xMin.toFloat()) / (state.arGraphDomain.xMax - state.arGraphDomain.xMin).toFloat()).coerceIn(0f, 1f)
         GraphColorMap.YValue -> ((nextYValue + 1f) / 2f).coerceIn(0f, 1f)
     }
     val animatedShift = if (state.graphAnimationEnabled) state.graphAnimationProgress * 0.18f else 0f
@@ -1614,9 +1756,41 @@ private fun ArChrome(
     onFeaturePhase: (ArFeaturePhase) -> Unit,
     onToggleMathArFeature: (MathArFeature) -> Unit,
     onLiveEquation: (String) -> Unit,
+    onGraphSlider: (String, Float) -> Unit,
+    onGraphQuality: (GraphQualityPreset) -> Unit,
+    onGraphDomain: (ArGraphDomain) -> Unit,
+    onComparisonEquation: (String) -> Unit,
+    onAnalysisFocus: (Float) -> Unit,
     onAddPointLabel: () -> Unit,
     onAddRulerAnchor: () -> Unit,
     onCompareOffset: (Float) -> Unit,
+    onGestureHandle: (ArGestureHandle) -> Unit,
+    onTransformStep: (Float) -> Unit,
+    onApplyGestureHandle: (Float) -> Unit,
+    onAddConstructionPoint: () -> Unit,
+    onConstructionLine: () -> Unit,
+    onConstructionSegment: () -> Unit,
+    onConstructionVector: () -> Unit,
+    onConstructionPlane: () -> Unit,
+    onConstructionCircle: () -> Unit,
+    onConstructionPolygon: () -> Unit,
+    onConstructionMidpoint: () -> Unit,
+    onConstructionParallel: () -> Unit,
+    onConstructionPerpendicular: () -> Unit,
+    onConstructionConstraint: (ConstructionConstraintKind) -> Unit,
+    onCapturePersistentAnchor: () -> Unit,
+    onDepthOcclusionMode: (ArDepthOcclusionMode) -> Unit,
+    onPerformanceProfile: (ArPerformanceProfile) -> Unit,
+    onMeshDensity: (Float) -> Unit,
+    onMaxSceneObjects: (Float) -> Unit,
+    onMarkScreenshotReady: () -> Unit,
+    onExportArScene: () -> Unit,
+    onApplyArTemplate: (String) -> Unit,
+    onSelectArWorkflow: (String) -> Unit,
+    onCompleteWorkflowStep: () -> Unit,
+    onAdvanceWorkflowStep: () -> Unit,
+    onRefreshWorkflow: () -> Unit,
+    onExportArActivity: () -> Unit,
     onCapture: () -> Unit,
     onReplace: () -> Unit,
     onMove: () -> Unit,
@@ -1722,9 +1896,41 @@ private fun ArChrome(
                         onFeaturePhase = onFeaturePhase,
                         onToggleMathArFeature = onToggleMathArFeature,
                         onLiveEquation = onLiveEquation,
+                        onGraphSlider = onGraphSlider,
+                        onGraphQuality = onGraphQuality,
+                        onGraphDomain = onGraphDomain,
+                        onComparisonEquation = onComparisonEquation,
+                        onAnalysisFocus = onAnalysisFocus,
                         onAddPointLabel = onAddPointLabel,
                         onAddRulerAnchor = onAddRulerAnchor,
                         onCompareOffset = onCompareOffset,
+                        onGestureHandle = onGestureHandle,
+                        onTransformStep = onTransformStep,
+                        onApplyGestureHandle = onApplyGestureHandle,
+                        onAddConstructionPoint = onAddConstructionPoint,
+                        onConstructionLine = onConstructionLine,
+                        onConstructionSegment = onConstructionSegment,
+                        onConstructionVector = onConstructionVector,
+                        onConstructionPlane = onConstructionPlane,
+                        onConstructionCircle = onConstructionCircle,
+                        onConstructionPolygon = onConstructionPolygon,
+                        onConstructionMidpoint = onConstructionMidpoint,
+                        onConstructionParallel = onConstructionParallel,
+                        onConstructionPerpendicular = onConstructionPerpendicular,
+                        onConstructionConstraint = onConstructionConstraint,
+                        onCapturePersistentAnchor = onCapturePersistentAnchor,
+                        onDepthOcclusionMode = onDepthOcclusionMode,
+                        onPerformanceProfile = onPerformanceProfile,
+                        onMeshDensity = onMeshDensity,
+                        onMaxSceneObjects = onMaxSceneObjects,
+                        onMarkScreenshotReady = onMarkScreenshotReady,
+                        onExportArScene = onExportArScene,
+                        onApplyArTemplate = onApplyArTemplate,
+                        onSelectArWorkflow = onSelectArWorkflow,
+                        onCompleteWorkflowStep = onCompleteWorkflowStep,
+                        onAdvanceWorkflowStep = onAdvanceWorkflowStep,
+                        onRefreshWorkflow = onRefreshWorkflow,
+                        onExportArActivity = onExportArActivity,
                         onCapture = {
                             onCapture()
                             onFloatingTool(FloatingMathTool.Capture)
@@ -2211,9 +2417,41 @@ private fun MathExperiencePanel(
     onFeaturePhase: (ArFeaturePhase) -> Unit,
     onToggleMathArFeature: (MathArFeature) -> Unit,
     onLiveEquation: (String) -> Unit,
+    onGraphSlider: (String, Float) -> Unit,
+    onGraphQuality: (GraphQualityPreset) -> Unit,
+    onGraphDomain: (ArGraphDomain) -> Unit,
+    onComparisonEquation: (String) -> Unit,
+    onAnalysisFocus: (Float) -> Unit,
     onAddPointLabel: () -> Unit,
     onAddRulerAnchor: () -> Unit,
     onCompareOffset: (Float) -> Unit,
+    onGestureHandle: (ArGestureHandle) -> Unit,
+    onTransformStep: (Float) -> Unit,
+    onApplyGestureHandle: (Float) -> Unit,
+    onAddConstructionPoint: () -> Unit,
+    onConstructionLine: () -> Unit,
+    onConstructionSegment: () -> Unit,
+    onConstructionVector: () -> Unit,
+    onConstructionPlane: () -> Unit,
+    onConstructionCircle: () -> Unit,
+    onConstructionPolygon: () -> Unit,
+    onConstructionMidpoint: () -> Unit,
+    onConstructionParallel: () -> Unit,
+    onConstructionPerpendicular: () -> Unit,
+    onConstructionConstraint: (ConstructionConstraintKind) -> Unit,
+    onCapturePersistentAnchor: () -> Unit,
+    onDepthOcclusionMode: (ArDepthOcclusionMode) -> Unit,
+    onPerformanceProfile: (ArPerformanceProfile) -> Unit,
+    onMeshDensity: (Float) -> Unit,
+    onMaxSceneObjects: (Float) -> Unit,
+    onMarkScreenshotReady: () -> Unit,
+    onExportArScene: () -> Unit,
+    onApplyArTemplate: (String) -> Unit,
+    onSelectArWorkflow: (String) -> Unit,
+    onCompleteWorkflowStep: () -> Unit,
+    onAdvanceWorkflowStep: () -> Unit,
+    onRefreshWorkflow: () -> Unit,
+    onExportArActivity: () -> Unit,
     onCapture: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2249,9 +2487,41 @@ private fun MathExperiencePanel(
             onFeaturePhase = onFeaturePhase,
             onToggleMathArFeature = onToggleMathArFeature,
             onLiveEquation = onLiveEquation,
+            onGraphSlider = onGraphSlider,
+            onGraphQuality = onGraphQuality,
+            onGraphDomain = onGraphDomain,
+            onComparisonEquation = onComparisonEquation,
+            onAnalysisFocus = onAnalysisFocus,
             onAddPointLabel = onAddPointLabel,
             onAddRulerAnchor = onAddRulerAnchor,
-            onCompareOffset = onCompareOffset
+            onCompareOffset = onCompareOffset,
+            onGestureHandle = onGestureHandle,
+            onTransformStep = onTransformStep,
+            onApplyGestureHandle = onApplyGestureHandle,
+            onAddConstructionPoint = onAddConstructionPoint,
+            onConstructionLine = onConstructionLine,
+            onConstructionSegment = onConstructionSegment,
+            onConstructionVector = onConstructionVector,
+            onConstructionPlane = onConstructionPlane,
+            onConstructionCircle = onConstructionCircle,
+            onConstructionPolygon = onConstructionPolygon,
+            onConstructionMidpoint = onConstructionMidpoint,
+            onConstructionParallel = onConstructionParallel,
+            onConstructionPerpendicular = onConstructionPerpendicular,
+            onConstructionConstraint = onConstructionConstraint,
+            onCapturePersistentAnchor = onCapturePersistentAnchor,
+            onDepthOcclusionMode = onDepthOcclusionMode,
+            onPerformanceProfile = onPerformanceProfile,
+            onMeshDensity = onMeshDensity,
+            onMaxSceneObjects = onMaxSceneObjects,
+            onMarkScreenshotReady = onMarkScreenshotReady,
+            onExportArScene = onExportArScene,
+            onApplyArTemplate = onApplyArTemplate,
+            onSelectArWorkflow = onSelectArWorkflow,
+            onCompleteWorkflowStep = onCompleteWorkflowStep,
+            onAdvanceWorkflowStep = onAdvanceWorkflowStep,
+            onRefreshWorkflow = onRefreshWorkflow,
+            onExportArActivity = onExportArActivity
         )
     }
 }
@@ -2277,9 +2547,41 @@ private fun MathArPhaseToolsPanel(
     onFeaturePhase: (ArFeaturePhase) -> Unit,
     onToggleMathArFeature: (MathArFeature) -> Unit,
     onLiveEquation: (String) -> Unit,
+    onGraphSlider: (String, Float) -> Unit,
+    onGraphQuality: (GraphQualityPreset) -> Unit,
+    onGraphDomain: (ArGraphDomain) -> Unit,
+    onComparisonEquation: (String) -> Unit,
+    onAnalysisFocus: (Float) -> Unit,
     onAddPointLabel: () -> Unit,
     onAddRulerAnchor: () -> Unit,
-    onCompareOffset: (Float) -> Unit
+    onCompareOffset: (Float) -> Unit,
+    onGestureHandle: (ArGestureHandle) -> Unit,
+    onTransformStep: (Float) -> Unit,
+    onApplyGestureHandle: (Float) -> Unit,
+    onAddConstructionPoint: () -> Unit,
+    onConstructionLine: () -> Unit,
+    onConstructionSegment: () -> Unit,
+    onConstructionVector: () -> Unit,
+    onConstructionPlane: () -> Unit,
+    onConstructionCircle: () -> Unit,
+    onConstructionPolygon: () -> Unit,
+    onConstructionMidpoint: () -> Unit,
+    onConstructionParallel: () -> Unit,
+    onConstructionPerpendicular: () -> Unit,
+    onConstructionConstraint: (ConstructionConstraintKind) -> Unit,
+    onCapturePersistentAnchor: () -> Unit,
+    onDepthOcclusionMode: (ArDepthOcclusionMode) -> Unit,
+    onPerformanceProfile: (ArPerformanceProfile) -> Unit,
+    onMeshDensity: (Float) -> Unit,
+    onMaxSceneObjects: (Float) -> Unit,
+    onMarkScreenshotReady: () -> Unit,
+    onExportArScene: () -> Unit,
+    onApplyArTemplate: (String) -> Unit,
+    onSelectArWorkflow: (String) -> Unit,
+    onCompleteWorkflowStep: () -> Unit,
+    onAdvanceWorkflowStep: () -> Unit,
+    onRefreshWorkflow: () -> Unit,
+    onExportArActivity: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2309,20 +2611,430 @@ private fun MathArPhaseToolsPanel(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
+                ArGraphEngineControls(
+                    state = state,
+                    onGraphSlider = onGraphSlider,
+                    onGraphQuality = onGraphQuality,
+                    onGraphDomain = onGraphDomain
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(onClick = onAddPointLabel, modifier = Modifier.weight(1f)) { Text("Pick point") }
                     OutlinedButton(onClick = onAddRulerAnchor, modifier = Modifier.weight(1f)) { Text("Ruler anchor") }
                 }
+                ArGestureHandleControls(
+                    state = state,
+                    onGestureHandle = onGestureHandle,
+                    onTransformStep = onTransformStep,
+                    onApplyGestureHandle = onApplyGestureHandle
+                )
             }
             ArFeaturePhase.GraphAnalysis -> {
-                Text("Graph analysis overlays: roots, tangent/normal, area, volume layers and constraints.", style = MaterialTheme.typography.bodySmall)
+                ArGraphAnalysisControls(
+                    state = state,
+                    onComparisonEquation = onComparisonEquation,
+                    onAnalysisFocus = onAnalysisFocus
+                )
             }
             ArFeaturePhase.EngineStrengthening -> {
                 Text("Engine overlays: grid lock, occlusion polish, saved scene anchors, confidence HUD and compare mode.", style = MaterialTheme.typography.bodySmall)
+                ConstructionGeometryPanel(
+                    state = state,
+                    onAddConstructionPoint = onAddConstructionPoint,
+                    onConstructionLine = onConstructionLine,
+                    onConstructionSegment = onConstructionSegment,
+                    onConstructionVector = onConstructionVector,
+                    onConstructionPlane = onConstructionPlane,
+                    onConstructionCircle = onConstructionCircle,
+                    onConstructionPolygon = onConstructionPolygon,
+                    onConstructionMidpoint = onConstructionMidpoint,
+                    onConstructionParallel = onConstructionParallel,
+                    onConstructionPerpendicular = onConstructionPerpendicular,
+                    onConstructionConstraint = onConstructionConstraint
+                )
+                ProductionArPanel(
+                    state = state,
+                    onCapturePersistentAnchor = onCapturePersistentAnchor,
+                    onDepthOcclusionMode = onDepthOcclusionMode,
+                    onPerformanceProfile = onPerformanceProfile,
+                    onMeshDensity = onMeshDensity,
+                    onMaxSceneObjects = onMaxSceneObjects,
+                    onMarkScreenshotReady = onMarkScreenshotReady,
+                    onExportArScene = onExportArScene,
+                    onApplyArTemplate = onApplyArTemplate
+                )
                 if (state.compareModeEnabled) {
                     Text("Compare offset ${"%.2f".format(state.compareOffsetMeters)}m", style = MaterialTheme.typography.labelMedium)
                     Slider(value = state.compareOffsetMeters, onValueChange = onCompareOffset, valueRange = 0.18f..0.8f)
                 }
+            }
+            ArFeaturePhase.WorkflowStudio -> {
+                ArWorkflowStudioPanel(
+                    state = state,
+                    onSelectArWorkflow = onSelectArWorkflow,
+                    onCompleteWorkflowStep = onCompleteWorkflowStep,
+                    onAdvanceWorkflowStep = onAdvanceWorkflowStep,
+                    onRefreshWorkflow = onRefreshWorkflow,
+                    onExportArActivity = onExportArActivity
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArGraphEngineControls(
+    state: ArViewerUiState,
+    onGraphSlider: (String, Float) -> Unit,
+    onGraphQuality: (GraphQualityPreset) -> Unit,
+    onGraphDomain: (ArGraphDomain) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val parse = state.compiledArExpression.parse
+        val status = when (parse) {
+            ParseOutcome.NotParsed -> "Not parsed"
+            is ParseOutcome.Success -> state.compiledArExpression.message
+            is ParseOutcome.Failure -> parse.message
+        }
+        AssistChip(
+            onClick = {},
+            label = { Text(status, maxLines = 2) }
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(GraphQualityPreset.entries) { quality ->
+                FilterChip(
+                    selected = state.arGraphQualityPreset == quality,
+                    onClick = { onGraphQuality(quality) },
+                    label = { Text(quality.shortLabel()) }
+                )
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(arDomainPresets) { preset ->
+                FilterChip(
+                    selected = state.arGraphDomain == preset.domain,
+                    onClick = { onGraphDomain(preset.domain) },
+                    label = { Text(preset.label) }
+                )
+            }
+        }
+        state.arGraphSliders.forEach { slider ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("${slider.symbol} coefficient", style = MaterialTheme.typography.labelMedium)
+                    Text("%.2f".format(slider.value), style = MaterialTheme.typography.labelMedium)
+                }
+                Slider(
+                    value = slider.value.toFloat(),
+                    onValueChange = { onGraphSlider(slider.symbol, it) },
+                    valueRange = slider.minimum.toFloat()..slider.maximum.toFloat(),
+                    steps = slider.sliderSteps()
+                )
+            }
+        }
+        if (state.arGraphSliders.isEmpty()) {
+            Text("Add coefficients like a, b, c or d to create AR sliders.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun ArGestureHandleControls(
+    state: ArViewerUiState,
+    onGestureHandle: (ArGestureHandle) -> Unit,
+    onTransformStep: (Float) -> Unit,
+    onApplyGestureHandle: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ArGestureHandle.entries) { handle ->
+                FilterChip(
+                    selected = state.selectedGestureHandle == handle,
+                    onClick = { onGestureHandle(handle) },
+                    label = { Text(handle.shortLabel()) }
+                )
+            }
+        }
+        Text("Handle step ${"%.2f".format(state.transformHandleStep)}m", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = state.transformHandleStep,
+            onValueChange = onTransformStep,
+            valueRange = 0.01f..0.3f
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { onApplyGestureHandle(-1f) }, modifier = Modifier.weight(1f)) { Text("-") }
+            OutlinedButton(onClick = { onApplyGestureHandle(1f) }, modifier = Modifier.weight(1f)) { Text("+") }
+        }
+        state.lastSnapResult?.let { snap ->
+            AssistChip(onClick = {}, label = { Text(if (snap.snapped) "Snap: ${snap.label}" else "Free placement") })
+        }
+    }
+}
+
+@Composable
+private fun ArGraphAnalysisControls(
+    state: ArViewerUiState,
+    onComparisonEquation: (String) -> Unit,
+    onAnalysisFocus: (Float) -> Unit
+) {
+    val report = state.arGraphAnalysis
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = state.comparisonEquation,
+            onValueChange = onComparisonEquation,
+            label = { Text("Compare / intersection equation") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Text("Tangent focus x=${"%.2f".format(state.arGraphAnalysisFocusX)}", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = state.analysisFocusProgress(),
+            onValueChange = onAnalysisFocus,
+            valueRange = 0f..1f
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { AssistChip(onClick = {}, label = { Text("Roots ${report.roots.size}") }) }
+            item { AssistChip(onClick = {}, label = { Text("Intersections ${report.intersections.size}") }) }
+            item { AssistChip(onClick = {}, label = { Text("Extrema ${report.extrema.size}") }) }
+            item { AssistChip(onClick = {}, label = { Text("Inflections ${report.inflections.size}") }) }
+        }
+        report.tangent?.let { tangent ->
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { AssistChip(onClick = {}, label = { Text("slope ${"%.3f".format(tangent.tangentSlope)}") }) }
+                item { AssistChip(onClick = {}, label = { Text("normal ${formatSlope(tangent.normalSlope)}") }) }
+                item { AssistChip(onClick = {}, label = { Text("angle ${"%.1f".format(tangent.tangentAngleDegrees)} deg") }) }
+            }
+        }
+        report.integral?.let { integral ->
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { AssistChip(onClick = {}, label = { Text("area ${"%.3f".format(integral.absoluteArea)}") }) }
+                item { AssistChip(onClick = {}, label = { Text("signed ${"%.3f".format(integral.signedArea)}") }) }
+                item { AssistChip(onClick = {}, label = { Text("volume ${"%.3f".format(integral.volumeOfRevolution)}") }) }
+                item { AssistChip(onClick = {}, label = { Text("arc ${"%.3f".format(integral.arcLength)}") }) }
+            }
+        }
+        if (report.highlightedPoints.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(report.highlightedPoints.take(8)) { point ->
+                    AssistChip(onClick = {}, label = { Text("${point.label} (${ "%.2f".format(point.x) }, ${ "%.2f".format(point.y) })") })
+                }
+            }
+        }
+        report.warnings.forEach { warning ->
+            Text(warning, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+        }
+    }
+}
+
+@Composable
+private fun ConstructionGeometryPanel(
+    state: ArViewerUiState,
+    onAddConstructionPoint: () -> Unit,
+    onConstructionLine: () -> Unit,
+    onConstructionSegment: () -> Unit,
+    onConstructionVector: () -> Unit,
+    onConstructionPlane: () -> Unit,
+    onConstructionCircle: () -> Unit,
+    onConstructionPolygon: () -> Unit,
+    onConstructionMidpoint: () -> Unit,
+    onConstructionParallel: () -> Unit,
+    onConstructionPerpendicular: () -> Unit,
+    onConstructionConstraint: (ConstructionConstraintKind) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { AssistChip(onClick = {}, label = { Text("Points ${state.constructionGeometry.points.size}") }) }
+            item { AssistChip(onClick = {}, label = { Text("Objects ${state.constructionGeometry.objects.size}") }) }
+            item { AssistChip(onClick = {}, label = { Text("Constraints ${state.constructionGeometry.constraints.size}") }) }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { OutlinedButton(onClick = onAddConstructionPoint) { Text("Point") } }
+            item { OutlinedButton(onClick = onConstructionLine) { Text("Line") } }
+            item { OutlinedButton(onClick = onConstructionSegment) { Text("Segment") } }
+            item { OutlinedButton(onClick = onConstructionVector) { Text("Vector AB") } }
+            item { OutlinedButton(onClick = onConstructionPlane) { Text("Plane ABC") } }
+            item { OutlinedButton(onClick = onConstructionCircle) { Text("Circle") } }
+            item { OutlinedButton(onClick = onConstructionPolygon) { Text("Polygon") } }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { OutlinedButton(onClick = onConstructionMidpoint) { Text("Midpoint") } }
+            item { OutlinedButton(onClick = onConstructionParallel) { Text("Parallel") } }
+            item { OutlinedButton(onClick = onConstructionPerpendicular) { Text("Perpendicular") } }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(
+                listOf(
+                    ConstructionConstraintKind.Parallel,
+                    ConstructionConstraintKind.Perpendicular,
+                    ConstructionConstraintKind.EqualLength,
+                    ConstructionConstraintKind.FixedDistance
+                )
+            ) { constraint ->
+                FilterChip(
+                    selected = state.constructionGeometry.constraints.any { it.kind == constraint },
+                    onClick = { onConstructionConstraint(constraint) },
+                    label = { Text(constraint.shortLabel()) }
+                )
+            }
+        }
+        if (state.resolvedConstructions.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(state.resolvedConstructions.takeLast(8)) { construction ->
+                    AssistChip(onClick = {}, label = { Text("${construction.label}: ${construction.valueLabel}") })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProductionArPanel(
+    state: ArViewerUiState,
+    onCapturePersistentAnchor: () -> Unit,
+    onDepthOcclusionMode: (ArDepthOcclusionMode) -> Unit,
+    onPerformanceProfile: (ArPerformanceProfile) -> Unit,
+    onMeshDensity: (Float) -> Unit,
+    onMaxSceneObjects: (Float) -> Unit,
+    onMarkScreenshotReady: () -> Unit,
+    onExportArScene: () -> Unit,
+    onApplyArTemplate: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Production AR", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ArSceneTemplates.templates) { template ->
+                FilterChip(
+                    selected = state.selectedTemplateId == template.id,
+                    onClick = { onApplyArTemplate(template.id) },
+                    label = { Text(template.title) }
+                )
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { AssistChip(onClick = {}, label = { Text("Anchor ${state.mathScene.persistentAnchor.kind}") }) }
+            item { AssistChip(onClick = {}, label = { Text(state.mathScene.persistentAnchor.restoreHint) }) }
+            item { AssistChip(onClick = {}, label = { Text("Mesh ${(state.meshDensity * 100f).toInt()}%") }) }
+            item { AssistChip(onClick = {}, label = { Text("Max ${state.maxSceneObjects}") }) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onCapturePersistentAnchor, modifier = Modifier.weight(1f)) { Text("Save anchor") }
+            OutlinedButton(onClick = onExportArScene, modifier = Modifier.weight(1f)) { Text("Export") }
+            OutlinedButton(onClick = onMarkScreenshotReady, modifier = Modifier.weight(1f)) { Text("Shot") }
+        }
+        Text("Depth / occlusion", style = MaterialTheme.typography.labelMedium)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ArDepthOcclusionMode.entries) { mode ->
+                FilterChip(
+                    selected = state.depthOcclusionMode == mode,
+                    onClick = { onDepthOcclusionMode(mode) },
+                    label = { Text(mode.shortLabel()) }
+                )
+            }
+        }
+        Text("Performance profile", style = MaterialTheme.typography.labelMedium)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ArPerformanceProfile.entries) { profile ->
+                FilterChip(
+                    selected = state.performanceProfile == profile,
+                    onClick = { onPerformanceProfile(profile) },
+                    label = { Text(profile.shortLabel()) }
+                )
+            }
+        }
+        Text("Mesh density ${(state.meshDensity * 100f).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = state.meshDensity,
+            onValueChange = onMeshDensity,
+            valueRange = 0.1f..1f
+        )
+        Text("Scene object budget ${state.maxSceneObjects}", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = state.maxSceneObjects.toFloat(),
+            onValueChange = onMaxSceneObjects,
+            valueRange = 4f..128f,
+            steps = 30
+        )
+        state.exportedScenePackage?.let { share ->
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { ElevatedAssistChip(onClick = {}, label = { Text(share.fileName) }) }
+                item { AssistChip(onClick = {}, label = { Text(share.mimeType) }) }
+                item { AssistChip(onClick = {}, label = { Text("${share.payload.length} bytes") }) }
+                item { AssistChip(onClick = {}, label = { Text(share.summary) }) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArWorkflowStudioPanel(
+    state: ArViewerUiState,
+    onSelectArWorkflow: (String) -> Unit,
+    onCompleteWorkflowStep: () -> Unit,
+    onAdvanceWorkflowStep: () -> Unit,
+    onRefreshWorkflow: () -> Unit,
+    onExportArActivity: () -> Unit
+) {
+    val template = ArWorkflowTemplates.templates.firstOrNull { it.id == state.activeWorkflowId }
+        ?: ArWorkflowTemplates.templates.first()
+    val step = state.workflowProgress.currentStep(template)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("AR Workflow Studio", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ArWorkflowTemplates.templates) { item ->
+                FilterChip(
+                    selected = state.activeWorkflowId == item.id,
+                    onClick = { onSelectArWorkflow(item.id) },
+                    label = { Text(item.title) }
+                )
+            }
+        }
+        Text(template.description, style = MaterialTheme.typography.bodySmall)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { ElevatedAssistChip(onClick = {}, label = { Text("${state.workflowEvaluation.completionPercent}% complete") }) }
+            item { AssistChip(onClick = {}, label = { Text("Ready ${state.workflowEvaluation.readinessScore}%") }) }
+            item { AssistChip(onClick = {}, label = { Text(template.recommendedMode) }) }
+            item { AssistChip(onClick = {}, label = { Text(template.equation) }) }
+        }
+        LinearProgressIndicator(
+            progress = { state.workflowEvaluation.completionPercent / 100f },
+            modifier = Modifier.fillMaxWidth()
+        )
+        step?.let {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(it.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text(it.actionHint, style = MaterialTheme.typography.bodySmall)
+                    Text(it.successLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = onCompleteWorkflowStep, modifier = Modifier.weight(1f)) { Text("Done") }
+                        OutlinedButton(onClick = onAdvanceWorkflowStep, modifier = Modifier.weight(1f)) { Text("Next") }
+                        OutlinedButton(onClick = onRefreshWorkflow, modifier = Modifier.weight(1f)) { Text("Check") }
+                    }
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onExportArActivity, modifier = Modifier.weight(1f)) { Text("Export Activity") }
+        }
+        if (state.workflowEvaluation.badges.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(state.workflowEvaluation.badges) { badge ->
+                    ElevatedAssistChip(onClick = {}, label = { Text(badge) })
+                }
+            }
+        }
+        state.workflowEvaluation.warnings.take(3).forEach { warning ->
+            Text(warning, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+        }
+        state.exportedActivityPackage?.let { activity ->
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { ElevatedAssistChip(onClick = {}, label = { Text(activity.fileName) }) }
+                item { AssistChip(onClick = {}, label = { Text(activity.mimeType) }) }
+                item { AssistChip(onClick = {}, label = { Text("${activity.payload.length} bytes") }) }
+                item { AssistChip(onClick = {}, label = { Text(activity.summary) }) }
             }
         }
     }
@@ -2604,6 +3316,7 @@ private fun ArFeaturePhase.label(): String = when (this) {
     ArFeaturePhase.DirectInteraction -> "Phase 1: Interact"
     ArFeaturePhase.GraphAnalysis -> "Phase 2: Analyze"
     ArFeaturePhase.EngineStrengthening -> "Phase 3: Engine"
+    ArFeaturePhase.WorkflowStudio -> "Phase 6: Workflow"
 }
 
 private fun ArFeaturePhase.features(): List<MathArFeature> = when (this) {
@@ -2628,6 +3341,13 @@ private fun ArFeaturePhase.features(): List<MathArFeature> = when (this) {
         MathArFeature.PrecisionConfidenceHud,
         MathArFeature.CompareMode
     )
+    ArFeaturePhase.WorkflowStudio -> listOf(
+        MathArFeature.GuidedWorkflow,
+        MathArFeature.ActivityExport,
+        MathArFeature.EvidenceRecorder,
+        MathArFeature.PrecisionConfidenceHud,
+        MathArFeature.ScenePersistence
+    )
 }
 
 private fun MathArFeature.shortLabel(): String = when (this) {
@@ -2646,6 +3366,43 @@ private fun MathArFeature.shortLabel(): String = when (this) {
     MathArFeature.ScenePersistence -> "Persist"
     MathArFeature.PrecisionConfidenceHud -> "Confidence"
     MathArFeature.CompareMode -> "Compare"
+    MathArFeature.GuidedWorkflow -> "Workflow"
+    MathArFeature.ActivityExport -> "Activity"
+    MathArFeature.EvidenceRecorder -> "Evidence"
+}
+
+private fun ArGestureHandle.shortLabel(): String = when (this) {
+    ArGestureHandle.MoveX -> "Move X"
+    ArGestureHandle.MoveY -> "Move Y"
+    ArGestureHandle.MoveZ -> "Move Z"
+    ArGestureHandle.RotateY -> "Rotate"
+    ArGestureHandle.UniformScale -> "Scale"
+    ArGestureHandle.StretchX -> "Stretch X"
+    ArGestureHandle.StretchZ -> "Stretch Z"
+    ArGestureHandle.Lift -> "Lift"
+}
+
+private fun ConstructionConstraintKind.shortLabel(): String = when (this) {
+    ConstructionConstraintKind.FixedDistance -> "Fixed distance"
+    ConstructionConstraintKind.Parallel -> "Parallel"
+    ConstructionConstraintKind.Perpendicular -> "Perpendicular"
+    ConstructionConstraintKind.EqualLength -> "Equal length"
+    ConstructionConstraintKind.FixedAngle -> "Fixed angle"
+    ConstructionConstraintKind.Coincident -> "Coincident"
+}
+
+private fun ArDepthOcclusionMode.shortLabel(): String = when (this) {
+    ArDepthOcclusionMode.Off -> "Off"
+    ArDepthOcclusionMode.SoftDepth -> "Soft"
+    ArDepthOcclusionMode.DepthTest -> "Depth test"
+    ArDepthOcclusionMode.GeospatialDepth -> "Geo depth"
+}
+
+private fun ArPerformanceProfile.shortLabel(): String = when (this) {
+    ArPerformanceProfile.BatterySaver -> "Battery"
+    ArPerformanceProfile.Balanced -> "Balanced"
+    ArPerformanceProfile.HighQuality -> "High"
+    ArPerformanceProfile.Presentation -> "Present"
 }
 
 private fun PaperGraphCalibrationStep.stepLabel(): String = when (this) {
@@ -2711,6 +3468,38 @@ private fun GraphColorMap.next(): GraphColorMap {
     val values = GraphColorMap.entries
     return values[(values.indexOf(this) + 1) % values.size]
 }
+
+private fun GraphQualityPreset.shortLabel(): String = when (this) {
+    GraphQualityPreset.BatterySaver -> "Lite"
+    GraphQualityPreset.Balanced -> "Balanced"
+    GraphQualityPreset.HighQuality -> "High"
+    GraphQualityPreset.Presentation -> "Studio"
+}
+
+private data class ArDomainPreset(val label: String, val domain: ArGraphDomain)
+
+private val arDomainPresets = listOf(
+    ArDomainPreset("Close", ArGraphDomain(xMin = -3.0, xMax = 3.0, yMin = -3.0, yMax = 3.0, zMin = -3.0, zMax = 3.0, valueClamp = 3.0)),
+    ArDomainPreset("Trig", ArGraphDomain()),
+    ArDomainPreset("Wide", ArGraphDomain(xMin = -10.0, xMax = 10.0, yMin = -10.0, yMax = 10.0, zMin = -6.0, zMax = 6.0, valueClamp = 6.0)),
+    ArDomainPreset("Surface", ArGraphDomain(xMin = -5.0, xMax = 5.0, yMin = -5.0, yMax = 5.0, zMin = -5.0, zMax = 5.0, valueClamp = 5.0))
+)
+
+private fun com.indianservers.ai_stem.domain.graph.GraphSlider.sliderSteps(): Int {
+    val count = ((maximum - minimum) / step).toInt()
+    return (count - 1).coerceIn(0, 80)
+}
+
+private fun ArViewerUiState.analysisFocusProgress(): Float {
+    val span = (arGraphDomain.xMax - arGraphDomain.xMin).coerceAtLeast(0.001)
+    return ((arGraphAnalysisFocusX - arGraphDomain.xMin) / span).toFloat().coerceIn(0f, 1f)
+}
+
+private fun Float.coerceAwayFromZero(): Float =
+    if (abs(this) < 0.001f) 0.001f else this
+
+private fun formatSlope(value: Double): String =
+    if (value.isFinite()) "%.3f".format(value) else "vertical"
 
 private fun onOff(enabled: Boolean): String = if (enabled) "on" else "off"
 
@@ -3098,12 +3887,25 @@ private fun MathArFeatureOverlay(state: ArViewerUiState) {
         if (state.coordinateGridLocked) add("Grid locked")
         if (state.compareModeEnabled) add("Compare: original vs transformed")
         if (state.depthOcclusionPolishEnabled) add("Depth occlusion on")
-        if (MathArFeature.MultiObjectConstraints in state.enabledMathArFeatures) add("Constraints ready")
-        if (MathArFeature.ScenePersistence in state.enabledMathArFeatures) add("Scene anchors saved")
-        if (MathArFeature.RootVisualizer in state.enabledMathArFeatures) add("Roots marked")
-        if (MathArFeature.TangentNormalTool in state.enabledMathArFeatures) add("Tangent + normal")
-        if (MathArFeature.AreaUnderCurve in state.enabledMathArFeatures) add("Area shaded")
-        if (MathArFeature.VolumeBuilder in state.enabledMathArFeatures) add("Volume layers")
+        if (MathArFeature.ScenePersistence in state.enabledMathArFeatures) add("Anchor: ${state.mathScene.persistentAnchor.kind}")
+        add("Profile: ${state.performanceProfile.shortLabel()}")
+        if (state.exportedScenePackage != null) add("Export ready")
+        if (MathArFeature.GuidedWorkflow in state.enabledMathArFeatures) {
+            add("Workflow ${state.workflowEvaluation.completionPercent}% | Ready ${state.workflowEvaluation.readinessScore}%")
+        }
+        if (state.exportedActivityPackage != null) add("Activity pack ready")
+        if (MathArFeature.MultiObjectConstraints in state.enabledMathArFeatures) {
+            add("Construction ${state.constructionGeometry.points.size} pts | ${state.constructionGeometry.objects.size} objs")
+            if (state.constructionGeometry.constraints.isNotEmpty()) add("Constraints ${state.constructionGeometry.constraints.size}")
+        }
+        if (MathArFeature.RootVisualizer in state.enabledMathArFeatures) add("Roots ${state.arGraphAnalysis.roots.size} | Intersections ${state.arGraphAnalysis.intersections.size}")
+        state.arGraphAnalysis.tangent?.let { tangent ->
+            if (MathArFeature.TangentNormalTool in state.enabledMathArFeatures) add("Slope ${"%.3f".format(tangent.tangentSlope)} | Normal ${formatSlope(tangent.normalSlope)}")
+        }
+        state.arGraphAnalysis.integral?.let { integral ->
+            if (MathArFeature.AreaUnderCurve in state.enabledMathArFeatures) add("Area ${"%.3f".format(integral.absoluteArea)}")
+            if (MathArFeature.VolumeBuilder in state.enabledMathArFeatures) add("Volume ${"%.3f".format(integral.volumeOfRevolution)}")
+        }
     }
     if (MathArFeature.LiveEquationEditing in state.enabledMathArFeatures) {
         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f), shape = MaterialTheme.shapes.small) {
@@ -3117,8 +3919,23 @@ private fun MathArFeatureOverlay(state: ArViewerUiState) {
             }
         }
     }
+    if (state.pickedGraphPoints.isNotEmpty()) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(state.pickedGraphPoints.takeLast(4)) { point ->
+                AssistChip(onClick = {}, label = { Text("Graph ${point.label}") })
+            }
+        }
+    }
     if (state.rulerAnchors.isNotEmpty()) {
         AssistChip(onClick = {}, label = { Text(state.rulerMeasurementLabel()) })
+    }
+    state.rulerMeasurement?.let { measurement ->
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            item { AssistChip(onClick = {}, label = { Text("rise ${"%.2f".format(measurement.rise)}") }) }
+            item { AssistChip(onClick = {}, label = { Text("run ${"%.2f".format(measurement.run)}") }) }
+            item { AssistChip(onClick = {}, label = { Text("angle ${"%.1f".format(measurement.angleDegrees)} deg") }) }
+            item { AssistChip(onClick = {}, label = { Text("slope ${formatSlope(measurement.slope)}") }) }
+        }
     }
     state.lastPlacementPoint?.takeIf { state.snappingEnabled || state.coordinateGridLocked }?.let { point ->
         AssistChip(onClick = {}, label = { Text("Anchor ${state.snapTargetLabel()} (${ "%.2f".format(point.x) }, ${ "%.2f".format(point.z) })") })
@@ -3143,7 +3960,8 @@ private fun ConfidenceHudStrip(state: ArViewerUiState) {
         "Calibration ${if (state.paperGraphCalibration.isComplete) "ready" else "pending"}",
         "Snap ${if (state.snappingEnabled || state.coordinateGridLocked) "on" else "off"}",
         "Depth ${if (state.depthOcclusionPolishEnabled && state.placementHitKind == PlacementHitKind.DepthPoint) "active" else if (state.depthOcclusionPolishEnabled) "ready" else "off"}",
-        "Persist ${state.savedScenes.size}"
+        "Persist ${state.savedScenes.size}",
+        "Workflow ${state.workflowEvaluation.readinessScore}%"
     )
     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         items(values) { value ->
@@ -3169,14 +3987,8 @@ private fun ArViewerUiState.scaleConfidence(): String = when {
 
 private fun ArViewerUiState.rulerMeasurementLabel(): String {
     if (rulerAnchors.size < 2) return "Ruler: add point ${rulerAnchors.size + 1}"
-    val a = rulerAnchors[0]
-    val b = rulerAnchors[1]
-    val dx = b.x - a.x
-    val dy = b.y - a.y
-    val dz = b.z - a.z
-    val distance = sqrt(dx * dx + dy * dy + dz * dz)
-    val slope = if (dx == 0f) 0f else dy / dx
-    return "Ruler ${"%.2f".format(distance)}m | slope ${"%.2f".format(slope)}"
+    val measurement = rulerMeasurement ?: return "Ruler ready"
+    return "Ruler ${"%.2f".format(measurement.distance)}m | slope ${formatSlope(measurement.slope)}"
 }
 
 private fun ArGuidanceSeverity.label(): String = when (this) {

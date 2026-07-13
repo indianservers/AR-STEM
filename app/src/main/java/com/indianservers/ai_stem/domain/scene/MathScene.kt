@@ -7,7 +7,7 @@ import com.indianservers.ai_stem.domain.mathematics.MeasurementUnit
 import com.indianservers.ai_stem.domain.mathematics.normalizeRotationDegrees
 import kotlin.math.max
 
-const val CURRENT_SCENE_SCHEMA_VERSION = 2
+const val CURRENT_SCENE_SCHEMA_VERSION = 3
 
 data class Vector3Value(val x: Double = 0.0, val y: Double = 0.0, val z: Double = 0.0) {
     fun plus(other: Vector3Value) = Vector3Value(x + other.x, y + other.y, z + other.z)
@@ -94,6 +94,8 @@ data class MathScene(
     val groups: List<SceneGroup> = emptyList(),
     val annotations: List<SceneAnnotation> = emptyList(),
     val measurementSettings: MeasurementSettings = MeasurementSettings(),
+    val persistentAnchor: PersistentAnchorRecord = PersistentAnchorRecord(),
+    val arProductionSettings: ArSceneProductionSettings = ArSceneProductionSettings(),
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
     val originStrategy: AnchorStrategy = AnchorStrategy.SceneOrigin

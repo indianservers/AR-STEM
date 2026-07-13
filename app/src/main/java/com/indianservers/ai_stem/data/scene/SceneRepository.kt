@@ -2,7 +2,13 @@ package com.indianservers.ai_stem.data.scene
 
 import android.content.Context
 import com.indianservers.ai_stem.domain.scene.CURRENT_SCENE_SCHEMA_VERSION
+import com.indianservers.ai_stem.domain.scene.ArDepthOcclusionMode
+import com.indianservers.ai_stem.domain.scene.ArPerformanceProfile
+import com.indianservers.ai_stem.domain.scene.ArSceneProductionSettings
 import com.indianservers.ai_stem.domain.scene.MathScene
+import com.indianservers.ai_stem.domain.scene.PersistentAnchorKind
+import com.indianservers.ai_stem.domain.scene.PersistentAnchorRecord
+import com.indianservers.ai_stem.domain.scene.Vector3Value
 import java.io.File
 
 data class SavedSceneSummary(
@@ -76,6 +82,33 @@ private fun encodeScene(scene: MathScene): String = buildString {
     appendLine("id=${scene.id}")
     appendLine("createdAt=${scene.createdAt}")
     appendLine("updatedAt=${scene.updatedAt}")
+    appendLine(
+        listOf(
+            "anchor",
+            scene.persistentAnchor.kind,
+            scene.persistentAnchor.engineMode.escapeField(),
+            scene.persistentAnchor.label.escapeField(),
+            scene.persistentAnchor.worldPosition.x,
+            scene.persistentAnchor.worldPosition.y,
+            scene.persistentAnchor.worldPosition.z,
+            scene.persistentAnchor.latitude ?: "",
+            scene.persistentAnchor.longitude ?: "",
+            scene.persistentAnchor.altitude ?: "",
+            scene.persistentAnchor.imageTargetName?.escapeField() ?: "",
+            scene.persistentAnchor.accuracyMeters ?: ""
+        ).joinToString("=")
+    )
+    appendLine(
+        listOf(
+            "production",
+            scene.arProductionSettings.depthMode,
+            scene.arProductionSettings.performanceProfile,
+            scene.arProductionSettings.meshDensity,
+            scene.arProductionSettings.maxSceneObjects,
+            scene.arProductionSettings.exportVersion,
+            scene.arProductionSettings.screenshotReady
+        ).joinToString("=")
+    )
     scene.objects.forEach { objectState ->
         appendLine(
             listOf(
@@ -113,6 +146,8 @@ private fun decodeScene(raw: String): SceneStorageResult {
     val id = lines.firstOrNull { it.startsWith("id=") }?.removePrefix("id=") ?: return SceneStorageResult.Failure("The saved scene is missing an ID.")
     val name = lines.firstOrNull { it.startsWith("name=") }?.removePrefix("name=")?.unescapeField() ?: "Saved Scene"
     val createdAt = lines.firstOrNull { it.startsWith("createdAt=") }?.removePrefix("createdAt=")?.toLongOrNull() ?: System.currentTimeMillis()
+    val anchor = lines.firstOrNull { it.startsWith("anchor=") }?.decodeAnchor() ?: PersistentAnchorRecord()
+    val production = lines.firstOrNull { it.startsWith("production=") }?.decodeProduction() ?: ArSceneProductionSettings()
     val objects = lines.filter { it.startsWith("object=") }.mapNotNull { line ->
         val parts = line.split("=")
         if (parts.size < 13) return@mapNotNull null
@@ -134,8 +169,54 @@ private fun decodeScene(raw: String): SceneStorageResult {
             updatedAt = createdAt
         )
     }
-    return SceneStorageResult.Success(MathScene(id = id, name = name, schemaVersion = CURRENT_SCENE_SCHEMA_VERSION, objects = objects, createdAt = createdAt))
+    return SceneStorageResult.Success(
+        MathScene(
+            id = id,
+            name = name,
+            schemaVersion = CURRENT_SCENE_SCHEMA_VERSION,
+            objects = objects,
+            persistentAnchor = anchor,
+            arProductionSettings = production,
+            createdAt = createdAt
+        )
+    )
 }
 
 private fun String.escapeField(): String = replace("%", "%25").replace("=", "%3D").replace("\n", "%0A")
 private fun String.unescapeField(): String = replace("%0A", "\n").replace("%3D", "=").replace("%25", "%")
+
+private fun String.decodeAnchor(): PersistentAnchorRecord? {
+    val parts = split("=")
+    if (parts.size < 7) return null
+    return PersistentAnchorRecord(
+        kind = enumValueOrDefault(parts.getOrNull(1), PersistentAnchorKind.SceneOrigin),
+        engineMode = parts.getOrNull(2)?.unescapeField() ?: "Indoor",
+        label = parts.getOrNull(3)?.unescapeField() ?: "Scene origin",
+        worldPosition = Vector3Value(
+            parts.getOrNull(4)?.toDoubleOrNull() ?: 0.0,
+            parts.getOrNull(5)?.toDoubleOrNull() ?: 0.0,
+            parts.getOrNull(6)?.toDoubleOrNull() ?: 0.0
+        ),
+        latitude = parts.getOrNull(7)?.toDoubleOrNull(),
+        longitude = parts.getOrNull(8)?.toDoubleOrNull(),
+        altitude = parts.getOrNull(9)?.toDoubleOrNull(),
+        imageTargetName = parts.getOrNull(10)?.unescapeField()?.ifBlank { null },
+        accuracyMeters = parts.getOrNull(11)?.toDoubleOrNull()
+    )
+}
+
+private fun String.decodeProduction(): ArSceneProductionSettings? {
+    val parts = split("=")
+    if (parts.size < 7) return null
+    return ArSceneProductionSettings(
+        depthMode = enumValueOrDefault(parts.getOrNull(1), ArDepthOcclusionMode.Off),
+        performanceProfile = enumValueOrDefault(parts.getOrNull(2), ArPerformanceProfile.Balanced),
+        meshDensity = parts.getOrNull(3)?.toFloatOrNull()?.coerceIn(0.1f, 1f) ?: 0.65f,
+        maxSceneObjects = parts.getOrNull(4)?.toIntOrNull()?.coerceIn(4, 128) ?: 32,
+        exportVersion = parts.getOrNull(5)?.toIntOrNull() ?: 1,
+        screenshotReady = parts.getOrNull(6)?.toBoolean() ?: false
+    )
+}
+
+private inline fun <reified T : Enum<T>> enumValueOrDefault(raw: String?, fallback: T): T =
+    enumValues<T>().firstOrNull { it.name == raw } ?: fallback

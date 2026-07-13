@@ -7,8 +7,26 @@ import com.indianservers.ai_stem.core.ar.ArPlacementMode
 import com.indianservers.ai_stem.core.ar.GraphColorMap
 import com.indianservers.ai_stem.core.ar.OutdoorGeospatialFrameState
 import com.indianservers.ai_stem.core.ar.PaperGraphFrameState
+import com.indianservers.ai_stem.domain.graph.ArCompiledExpression
+import com.indianservers.ai_stem.domain.graph.ArGraphDomain
+import com.indianservers.ai_stem.domain.graph.ArGraphAnalysisReport
+import com.indianservers.ai_stem.domain.graph.ArMathEngine
+import com.indianservers.ai_stem.domain.graph.GraphQualityPreset
+import com.indianservers.ai_stem.domain.graph.GraphSlider
+import com.indianservers.ai_stem.domain.geometry.ConstructionGeometryState
+import com.indianservers.ai_stem.domain.geometry.ResolvedConstructionObject
+import com.indianservers.ai_stem.domain.interaction.ArGestureHandle
+import com.indianservers.ai_stem.domain.interaction.ArPickedMathPoint
+import com.indianservers.ai_stem.domain.interaction.ArRulerMeasurement
+import com.indianservers.ai_stem.domain.interaction.ArSnapResult
 import com.indianservers.ai_stem.domain.mathematics.MathObjectType
 import com.indianservers.ai_stem.domain.scene.ExperienceMode
+import com.indianservers.ai_stem.domain.scene.ArDepthOcclusionMode
+import com.indianservers.ai_stem.domain.scene.ArActivitySharePackage
+import com.indianservers.ai_stem.domain.scene.ArPerformanceProfile
+import com.indianservers.ai_stem.domain.scene.ArWorkflowEvaluation
+import com.indianservers.ai_stem.domain.scene.ArWorkflowProgress
+import com.indianservers.ai_stem.domain.scene.ArSceneSharePackage
 import com.indianservers.ai_stem.domain.scene.MathScene
 import com.indianservers.ai_stem.domain.scene.SceneHistory
 import com.indianservers.ai_stem.domain.scene.SceneInteractionMode
@@ -37,7 +55,7 @@ enum class PaperGraphLayer { Axes, Scale, Graph, Surface3d, CrossSection }
 enum class FloatingMathTool { Axes, Grid, Labels, Formula, Measure, Slice, Animate, Capture }
 enum class GraphAnimationMode { RotateGraph, SweepArea, BuildVolume, MoveTangentPoint, AnimateSineWave }
 enum class Function3dTransformMode { Surface, Extrusion, SolidOfRevolution, TangentPlane, CrossSectionSlices }
-enum class ArFeaturePhase { DirectInteraction, GraphAnalysis, EngineStrengthening }
+enum class ArFeaturePhase { DirectInteraction, GraphAnalysis, EngineStrengthening, WorkflowStudio }
 enum class MathArFeature {
     ObjectSnapping,
     GestureHandles,
@@ -53,7 +71,10 @@ enum class MathArFeature {
     DepthOcclusion,
     ScenePersistence,
     PrecisionConfidenceHud,
-    CompareMode
+    CompareMode,
+    GuidedWorkflow,
+    ActivityExport,
+    EvidenceRecorder
 }
 enum class MathArExperience {
     MarkerlessObjects,
@@ -169,9 +190,24 @@ data class ArViewerUiState(
         MathArFeature.PrecisionConfidenceHud
     ),
     val liveEquation: String = "y = sin(x)",
+    val compiledArExpression: ArCompiledExpression = ArMathEngine().compile("y = sin(x)"),
+    val comparisonEquation: String = "y = 0",
+    val compiledComparisonExpression: ArCompiledExpression = ArMathEngine().compile("y = 0"),
+    val arGraphAnalysisFocusX: Double = 0.0,
+    val arGraphAnalysis: ArGraphAnalysisReport = ArMathEngine().analyze(ArMathEngine().compile("y = sin(x)")),
+    val arGraphDomain: ArGraphDomain = ArGraphDomain(),
+    val arGraphQualityPreset: GraphQualityPreset = GraphQualityPreset.Balanced,
+    val arGraphSliders: List<GraphSlider> = emptyList(),
     val pickedPoints: List<ArPointLabel> = emptyList(),
+    val pickedGraphPoints: List<ArPickedMathPoint> = emptyList(),
     val rulerAnchors: List<ArPointLabel> = emptyList(),
+    val rulerMeasurement: ArRulerMeasurement? = null,
+    val constructionGeometry: ConstructionGeometryState = ConstructionGeometryState(),
+    val resolvedConstructions: List<ResolvedConstructionObject> = emptyList(),
     val snappingEnabled: Boolean = false,
+    val lastSnapResult: ArSnapResult? = null,
+    val selectedGestureHandle: ArGestureHandle = ArGestureHandle.UniformScale,
+    val transformHandleStep: Float = 0.05f,
     val coordinateGridLocked: Boolean = false,
     val compareModeEnabled: Boolean = false,
     val compareOffsetMeters: Float = 0.34f,
@@ -186,6 +222,16 @@ data class ArViewerUiState(
     val savedScenesVisible: Boolean = false,
     val savedScenes: List<SavedSceneSummary> = emptyList(),
     val loadedSceneNeedsPlacement: Boolean = false,
+    val exportedScenePackage: ArSceneSharePackage? = null,
+    val exportedActivityPackage: ArActivitySharePackage? = null,
+    val selectedTemplateId: String? = null,
+    val activeWorkflowId: String = "surface-masterclass",
+    val workflowProgress: ArWorkflowProgress = ArWorkflowProgress(),
+    val workflowEvaluation: ArWorkflowEvaluation = ArWorkflowEvaluation(),
+    val depthOcclusionMode: ArDepthOcclusionMode = ArDepthOcclusionMode.Off,
+    val performanceProfile: ArPerformanceProfile = ArPerformanceProfile.Balanced,
+    val meshDensity: Float = 0.65f,
+    val maxSceneObjects: Int = 32,
     val userMessage: UiMessage? = null,
     val error: String? = null
 )

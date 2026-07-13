@@ -35,6 +35,14 @@ class MathExpressionParser {
                     val start = i
                     i++
                     while (i < source.length && (source[i].isDigit() || source[i] == '.')) i++
+                    if (i < source.length && source[i].lowercaseChar() == 'e') {
+                        val exponentStart = i
+                        i++
+                        if (i < source.length && source[i] in "+-") i++
+                        val digitStart = i
+                        while (i < source.length && source[i].isDigit()) i++
+                        if (digitStart == i) i = exponentStart
+                    }
                     tokens += Token(TokenType.Number, source.substring(start, i), start)
                 }
                 c.isLetter() || c == '_' -> {
@@ -275,6 +283,11 @@ class MathExpressionEvaluator {
             "ceil" -> ceil(one(name, args))
             "round" -> round(one(name, args))
             "sign" -> sign(one(name, args))
+            "pow" -> args.getOrElse(0) { Double.NaN }.pow(args.getOrElse(1) { Double.NaN })
+            "root" -> args.getOrElse(0) { Double.NaN }.pow(1.0 / args.getOrElse(1) { 2.0 })
+            "rad" -> Math.toRadians(one(name, args))
+            "deg" -> Math.toDegrees(one(name, args))
+            "clamp" -> args.getOrElse(0) { Double.NaN }.coerceIn(args.getOrElse(1) { Double.NEGATIVE_INFINITY }, args.getOrElse(2) { Double.POSITIVE_INFINITY })
             "min" -> args.minOrNull() ?: Double.NaN
             "max" -> args.maxOrNull() ?: Double.NaN
             "mod" -> args.getOrElse(0) { 0.0 }.mod(args.getOrElse(1) { 1.0 })
