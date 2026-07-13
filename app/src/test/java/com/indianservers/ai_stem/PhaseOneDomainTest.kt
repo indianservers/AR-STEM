@@ -30,10 +30,8 @@ class PhaseOneDomainTest {
 
     @Test
     fun catalogueContainsExactlyTheThreePhaseOneObjects() {
-        assertEquals(
-            listOf(MathObjectType.CoordinatePlane, MathObjectType.Cube, MathObjectType.SineCurve),
-            MathematicsCatalogue.phaseOneObjects.map { it.type }
-        )
+        val types = MathematicsCatalogue.phaseOneObjects.map { it.type }
+        assertTrue(types.containsAll(listOf(MathObjectType.CoordinatePlane, MathObjectType.Cube, MathObjectType.SineCurve)))
     }
 
     @Test

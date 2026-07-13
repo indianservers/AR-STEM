@@ -1,8 +1,15 @@
 package com.indianservers.ai_stem.feature.arviewer
 
+import com.indianservers.ai_stem.data.scene.SavedSceneSummary
+import com.indianservers.ai_stem.core.ar.ArGuidanceSeverity
+import com.indianservers.ai_stem.core.ar.ArEngineMode
+import com.indianservers.ai_stem.core.ar.ArPlacementMode
+import com.indianservers.ai_stem.core.ar.OutdoorGeospatialFrameState
 import com.indianservers.ai_stem.domain.mathematics.MathObjectType
-import com.indianservers.ai_stem.domain.mathematics.clampScale
-import com.indianservers.ai_stem.domain.mathematics.normalizeRotationDegrees
+import com.indianservers.ai_stem.domain.scene.ExperienceMode
+import com.indianservers.ai_stem.domain.scene.MathScene
+import com.indianservers.ai_stem.domain.scene.SceneHistory
+import com.indianservers.ai_stem.domain.scene.SceneInteractionMode
 import kotlinx.coroutines.flow.Flow
 
 sealed interface ArAvailabilityState {
@@ -16,11 +23,16 @@ sealed interface ArAvailabilityState {
 }
 
 enum class CameraPermissionState { NotRequested, Granted, Denied, PermanentlyDenied }
+enum class LocationPermissionState { NotRequested, Granted, Denied, PermanentlyDenied }
 enum class ArSessionStatus { Initializing, Scanning, PlaneDetected, ReadyToPlace, ObjectPlaced, ObjectSelected, MovingObject, TrackingLost, Paused, FatalError }
 enum class TrackingStatus { Unknown, Tracking, Limited, Paused }
+enum class PlacementHitKind { None, Plane, DepthPoint, FeaturePoint, Instant, StreetscapeGeometry }
+enum class PlacementQuality { Unknown, Excellent, Good, Weak, Recovering, Lost }
+enum class ArRecoveryMode { Normal, TrackingLimited, AnchorRecovering, RePlacementRequired }
 enum class InteractionMode { Placement, ObjectSelected, MovingObject }
 
 data class UiMessage(val text: String)
+
 data class PlacedMathObject(
     val id: String,
     val type: MathObjectType,
@@ -33,13 +45,44 @@ data class PlacedMathObject(
 data class ArViewerUiState(
     val availability: ArAvailabilityState = ArAvailabilityState.Checking,
     val permission: CameraPermissionState = CameraPermissionState.NotRequested,
+    val locationPermission: LocationPermissionState = LocationPermissionState.NotRequested,
+    val arEngineMode: ArEngineMode = ArEngineMode.Indoor,
     val sessionStatus: ArSessionStatus = ArSessionStatus.Initializing,
     val trackingStatus: TrackingStatus = TrackingStatus.Unknown,
+    val anchorTrackingStatus: TrackingStatus = TrackingStatus.Unknown,
+    val trackingMessage: String = "Initializing AR tracking.",
+    val placementQuality: PlacementQuality = PlacementQuality.Unknown,
+    val recoveryMode: ArRecoveryMode = ArRecoveryMode.Normal,
+    val canRePlaceObject: Boolean = false,
+    val placementScore: Int = 0,
+    val motionStable: Boolean = true,
+    val lightStable: Boolean = true,
+    val smartPlacementGuidance: String = "Move slowly to scan.",
+    val shouldDelayPlacement: Boolean = false,
+    val shouldPreferPlane: Boolean = false,
+    val guidanceHeadline: String = "Initializing AR",
+    val guidanceInstruction: String = "Move slowly to scan your space.",
+    val guidanceSeverity: ArGuidanceSeverity = ArGuidanceSeverity.Info,
+    val recommendedPlacementMode: ArPlacementMode = ArPlacementMode.Auto,
+    val arDiagnostics: List<String> = emptyList(),
+    val diagnosticsVisible: Boolean = false,
+    val selectedDefinitionId: String = "cube",
     val selectedObjectType: MathObjectType = MathObjectType.Cube,
     val placedObject: PlacedMathObject? = null,
+    val mathScene: MathScene = MathScene(name = "AR Mathematics Scene"),
+    val history: SceneHistory = SceneHistory(),
+    val experienceMode: ExperienceMode = ExperienceMode.Beginner,
+    val sceneInteractionMode: SceneInteractionMode = SceneInteractionMode.Place,
     val hasValidPlacementHit: Boolean = false,
+    val placementHitKind: PlacementHitKind = PlacementHitKind.None,
+    val outdoorGeospatial: OutdoorGeospatialFrameState? = null,
     val planesVisible: Boolean = true,
     val interactionMode: InteractionMode = InteractionMode.Placement,
+    val inspectorVisible: Boolean = false,
+    val layersVisible: Boolean = false,
+    val savedScenesVisible: Boolean = false,
+    val savedScenes: List<SavedSceneSummary> = emptyList(),
+    val loadedSceneNeedsPlacement: Boolean = false,
     val userMessage: UiMessage? = null,
     val error: String? = null
 )
@@ -71,11 +114,11 @@ fun reduceInteraction(
         )
         is ObjectInteractionCommand.Rotate -> state.copy(
             placedObject = objectState.copy(
-                rotationDegrees = normalizeRotationDegrees(objectState.rotationDegrees + command.deltaDegrees)
+                rotationDegrees = com.indianservers.ai_stem.domain.mathematics.normalizeRotationDegrees(objectState.rotationDegrees + command.deltaDegrees)
             )
         )
         is ObjectInteractionCommand.Scale -> state.copy(
-            placedObject = objectState.copy(scaleFactor = clampScale(objectState.scaleFactor * command.scaleFactor))
+            placedObject = objectState.copy(scaleFactor = com.indianservers.ai_stem.domain.mathematics.clampScale(objectState.scaleFactor * command.scaleFactor))
         )
         is ObjectInteractionCommand.MoveTo -> state.copy(
             sessionStatus = ArSessionStatus.ObjectPlaced,

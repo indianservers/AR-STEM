@@ -6,8 +6,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.indianservers.ai_stem.core.designsystem.AiStemTheme
 import com.indianservers.ai_stem.feature.arviewer.ArViewerScreen
+import com.indianservers.ai_stem.feature.graphing.GraphingStudioScreen
+import com.indianservers.ai_stem.feature.labs.AlgebraLaboratoryScreen
+import com.indianservers.ai_stem.feature.labs.CalculusLaboratoryScreen
+import com.indianservers.ai_stem.feature.labs.DataProbabilityLaboratoryScreen
 import com.indianservers.ai_stem.feature.mathematics.MathematicsHomeScreen
 import com.indianservers.ai_stem.feature.onboarding.WelcomeScreen
+import com.indianservers.ai_stem.feature.projects.ProjectManagerScreen
 import com.indianservers.ai_stem.feature.subjects.SubjectSelectionScreen
 
 @Composable
@@ -45,8 +50,23 @@ fun AiStemApp() {
                     }
                 )
             }
+            composable(AppDestination.Projects.route) {
+                ProjectManagerScreen(onBack = { navController.popBackStack() })
+            }
             composable(AppDestination.ArViewer.route) {
                 ArViewerScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.GraphingStudio.route) {
+                GraphingStudioScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.AlgebraLab.route) {
+                AlgebraLaboratoryScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.CalculusLab.route) {
+                CalculusLaboratoryScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.DataProbabilityLab.route) {
+                DataProbabilityLaboratoryScreen(onBack = { navController.popBackStack() })
             }
         }
     }
