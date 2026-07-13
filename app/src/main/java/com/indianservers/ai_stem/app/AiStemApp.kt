@@ -13,6 +13,7 @@ import com.indianservers.ai_stem.feature.labs.DataProbabilityLaboratoryScreen
 import com.indianservers.ai_stem.feature.mathematics.MathematicsHomeScreen
 import com.indianservers.ai_stem.feature.onboarding.WelcomeScreen
 import com.indianservers.ai_stem.feature.projects.ProjectManagerScreen
+import com.indianservers.ai_stem.feature.solarsystem.SolarSystemScreen
 import com.indianservers.ai_stem.feature.subjects.SubjectSelectionScreen
 
 @Composable
@@ -37,6 +38,11 @@ fun AiStemApp() {
                         navController.navigate(AppDestination.Mathematics.route) {
                             launchSingleTop = true
                         }
+                    },
+                    onSolarSystem = {
+                        navController.navigate(AppDestination.SolarSystem.route) {
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
@@ -45,6 +51,16 @@ fun AiStemApp() {
                     onBack = { navController.popBackStack() },
                     onOpenAr = {
                         navController.navigate(AppDestination.ArViewer.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenGraphingStudio = {
+                        navController.navigate(AppDestination.GraphingStudio.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenProjects = {
+                        navController.navigate(AppDestination.Projects.route) {
                             launchSingleTop = true
                         }
                     }
@@ -58,6 +74,16 @@ fun AiStemApp() {
             }
             composable(AppDestination.GraphingStudio.route) {
                 GraphingStudioScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.SolarSystem.route) {
+                SolarSystemScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenAr = {
+                        navController.navigate(AppDestination.ArViewer.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
             }
             composable(AppDestination.AlgebraLab.route) {
                 AlgebraLaboratoryScreen(onBack = { navController.popBackStack() })

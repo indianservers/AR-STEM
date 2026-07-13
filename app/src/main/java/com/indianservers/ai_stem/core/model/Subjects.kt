@@ -6,6 +6,7 @@ enum class StemSubject(
     val enabled: Boolean
 ) {
     Mathematics("Mathematics", "Graphs, shapes, solids and mathematical models", true),
+    SolarSystem("Solar System", "Planets, orbits, scale, rotation and space models", true),
     Physics("Physics", "Forces, motion, electricity and physical systems", false),
     Chemistry("Chemistry", "Atoms, molecules, reactions and laboratory models", false),
     Biology("Biology", "Cells, anatomy, ecosystems and biological structures", false)

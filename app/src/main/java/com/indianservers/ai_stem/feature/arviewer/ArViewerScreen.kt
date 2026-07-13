@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -66,6 +68,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -84,8 +87,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as DrawSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -99,6 +105,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.google.android.filament.MaterialInstance
 import com.google.ar.core.Anchor
 import com.google.ar.core.Config
 import com.google.ar.core.Coordinates2d
@@ -116,6 +123,8 @@ import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.TrackingState
 import com.indianservers.ai_stem.domain.mathematics.MathObjectType
 import com.indianservers.ai_stem.core.ar.ArEngineMode
+import com.indianservers.ai_stem.core.ar.AugmentedImageArEngine
+import com.indianservers.ai_stem.core.ar.GraphColorMap
 import com.indianservers.ai_stem.core.ar.ArPoseSample
 import com.indianservers.ai_stem.core.ar.ArGuidanceSeverity
 import com.indianservers.ai_stem.core.ar.ArSensorFusionEngine
@@ -130,6 +139,7 @@ import com.indianservers.ai_stem.core.ar.OutdoorGeometryObservation
 import com.indianservers.ai_stem.core.ar.OutdoorGeometryType
 import com.indianservers.ai_stem.core.ar.OutdoorMeshQuality
 import com.indianservers.ai_stem.core.ar.OutdoorWireframeEdge
+import com.indianservers.ai_stem.core.ar.PaperGraphFrameState
 import com.indianservers.ai_stem.domain.mathematics.MathematicsCatalogue
 import com.indianservers.ai_stem.domain.mathematics.MathObjectCategory
 import com.indianservers.ai_stem.domain.mathematics.MathObjectDefinition
@@ -156,8 +166,11 @@ import io.github.sceneview.rememberOnGestureListener
 import kotlinx.coroutines.delay
 import java.nio.ByteOrder
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 private const val AR_LOG_TAG = "AiStemAR"
 private const val RETICLE_HIT_TEST_INTERVAL_NANOS = 250_000_000L
@@ -277,6 +290,11 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
                             onPlaneStatus = viewModel::onPlaneStatus,
                             onTrackingStatus = viewModel::onTrackingStatus,
                             onSensorFusion = viewModel::onSensorFusion,
+                            onPaperGraphFrame = viewModel::onPaperGraphFrame,
+                            onPaperGraphCalibrationTap = viewModel::onPaperGraphCalibrationTap,
+                            onPointLabelTap = viewModel::addPointLabelAt,
+                            onRulerAnchorTap = viewModel::addRulerAnchorAt,
+                            onPlacementPoint = viewModel::recordPlacementPoint,
                             onOutdoorGeospatialFrame = viewModel::onOutdoorGeospatialFrame,
                             onPlacementMissed = viewModel::onPlacementMissed,
                             onRuntimeError = viewModel::onRuntimeError
@@ -295,6 +313,29 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
                                 viewModel.selectArEngineMode(mode)
                             }
                         },
+                        onSelectMathExperience = { experience ->
+                            if (experience == MathArExperience.OutdoorGeometry && state.locationPermission != LocationPermissionState.Granted) {
+                                askedLocationPermission = true
+                                locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                            } else {
+                                viewModel.selectMathArExperience(experience)
+                            }
+                        },
+                        onFloatingTool = viewModel::selectFloatingTool,
+                        onGraphColorMap = viewModel::setGraphColorMap,
+                        onFunction3dTransform = viewModel::setFunction3dTransformMode,
+                        onAnimationProgress = viewModel::setGraphAnimationProgress,
+                        onAnimationMode = viewModel::setGraphAnimationMode,
+                        onSlicePosition = viewModel::setGraphSlicePosition,
+                        onCalibrationStep = viewModel::advancePaperGraphCalibration,
+                        onPaperGraphLayer = viewModel::togglePaperGraphLayer,
+                        onFeaturePhase = viewModel::selectFeaturePhase,
+                        onToggleMathArFeature = viewModel::toggleMathArFeature,
+                        onLiveEquation = viewModel::updateLiveEquation,
+                        onAddPointLabel = viewModel::addGeneratedPointLabel,
+                        onAddRulerAnchor = viewModel::addRulerAnchor,
+                        onCompareOffset = viewModel::setCompareOffset,
+                        onCapture = viewModel::acknowledgeCapture,
                         onReplace = {
                             anchor?.detach()
                             anchor = null
@@ -410,6 +451,11 @@ private fun ArRuntime(
     onPlaneStatus: (Boolean, PlacementHitKind) -> Unit,
     onTrackingStatus: (TrackingStatus, TrackingStatus, String) -> Unit,
     onSensorFusion: (ArSensorFusionResult) -> Unit,
+    onPaperGraphFrame: (PaperGraphFrameState) -> Unit,
+    onPaperGraphCalibrationTap: (PaperGraphCalibrationPoint) -> Unit,
+    onPointLabelTap: (Float, Float, Float) -> Unit,
+    onRulerAnchorTap: (Float, Float, Float) -> Unit,
+    onPlacementPoint: (Float, Float, Float) -> Unit,
     onOutdoorGeospatialFrame: (OutdoorGeospatialFrameState) -> Unit,
     onPlacementMissed: () -> Unit,
     onRuntimeError: (String, Throwable) -> Unit
@@ -432,6 +478,7 @@ private fun ArRuntime(
     var outdoorMeshAnchor by remember { mutableStateOf<Anchor?>(null) }
     var outdoorWireframeEdges by remember { mutableStateOf<List<OutdoorWireframeEdge>>(emptyList()) }
     val outdoorMode = state.arEngineMode == ArEngineMode.OutdoorGeospatialMath
+    val paperGraphMode = state.arEngineMode == ArEngineMode.PaperGraph
     val stablePlaneFrames = remember { mutableMapOf<Int, Int>() }
     val arLifecycleOwner = remember {
         object : LifecycleOwner {
@@ -526,6 +573,7 @@ private fun ArRuntime(
                     config.planeFindingMode = when (state.arEngineMode) {
                         ArEngineMode.SurfacePlacement -> Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                         ArEngineMode.OutdoorGeospatialMath -> Config.PlaneFindingMode.DISABLED
+                        ArEngineMode.PaperGraph -> Config.PlaneFindingMode.HORIZONTAL
                         else -> Config.PlaneFindingMode.HORIZONTAL
                     }
                     config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
@@ -540,13 +588,14 @@ private fun ArRuntime(
                     depthEnabled = depthSupported
                     config.depthMode = if (depthEnabled) Config.DepthMode.AUTOMATIC else Config.DepthMode.DISABLED
                     val outdoorConfig = OutdoorGeospatialArEngine.configureSession(session, config, outdoorMode)
+                    val paperConfig = AugmentedImageArEngine.configureSession(session, config, paperGraphMode)
                     depthEnabled = if (outdoorConfig.enabled) outdoorConfig.geospatialDepthEnabled else depthEnabled
                     semanticsSupported = runCatching { session.isSemanticModeSupported(Config.SemanticMode.ENABLED) }.getOrDefault(false)
                     semanticsEnabled = semanticsSupported
                     config.semanticMode = if (semanticsEnabled) Config.SemanticMode.ENABLED else Config.SemanticMode.DISABLED
                     Log.d(
                         AR_LOG_TAG,
-                        "Session configured mode=${state.arEngineMode} planes=${config.planeFindingMode} depth=${config.depthMode}/supported=$depthSupported semantic=${config.semanticMode}/supported=$semanticsSupported instant=${config.instantPlacementMode} geospatial=${config.geospatialMode} streetscape=${config.streetscapeGeometryMode}"
+                        "Session configured mode=${state.arEngineMode} planes=${config.planeFindingMode} depth=${config.depthMode}/supported=$depthSupported semantic=${config.semanticMode}/supported=$semanticsSupported instant=${config.instantPlacementMode} geospatial=${config.geospatialMode} streetscape=${config.streetscapeGeometryMode} imageDb=${paperConfig.enabled}/${paperConfig.referenceImageCount}"
                     )
                 }.onFailure {
                     Log.e(AR_LOG_TAG, "AR session configuration failed", it)
@@ -566,6 +615,9 @@ private fun ArRuntime(
                     val surfaceState = observeStableSurfaces(session, stablePlaneFrames)
                     if (outdoorMode) {
                         OutdoorGeospatialArEngine.observeFrame(session, frame, lastOutdoorGeometryHit).also(onOutdoorGeospatialFrame)
+                    }
+                    if (paperGraphMode) {
+                        AugmentedImageArEngine.observeFrame(frame).also(onPaperGraphFrame)
                     }
                     val shouldProbeReticle = viewportWidth > 0 &&
                         viewportHeight > 0 &&
@@ -634,7 +686,6 @@ private fun ArRuntime(
                 onSingleTapConfirmed = { event: MotionEvent, _ ->
                     runCatching {
                         Log.d(AR_LOG_TAG, "Tap x=${event.x} y=${event.y} moving=$moving hasAnchor=${anchor != null} delay=${state.shouldDelayPlacement}")
-                        if (anchor != null && !moving) return@rememberOnGestureListener
                         val frame = latestFrame
                         if (frame == null) {
                             Log.w(AR_LOG_TAG, "Tap ignored because latest AR frame is null")
@@ -648,8 +699,37 @@ private fun ArRuntime(
                             allowFeaturePoint = true,
                             allowInstant = true
                         )?.hit
+                        if (anchor != null && !moving) {
+                            val pose = hit?.hitPose ?: frame.camera.pose
+                            when {
+                                MathArFeature.MeasurementRulerAnchors in state.enabledMathArFeatures &&
+                                    state.selectedFeaturePhase == ArFeaturePhase.DirectInteraction -> {
+                                    onRulerAnchorTap(pose.tx(), pose.ty(), pose.tz())
+                                }
+                                MathArFeature.PointPicker in state.enabledMathArFeatures -> {
+                                    onPointLabelTap(pose.tx(), pose.ty(), pose.tz())
+                                }
+                            }
+                            return@rememberOnGestureListener
+                        }
                         if (hit != null) {
                             Log.d(AR_LOG_TAG, "Creating anchor from hit trackable=${hit.trackable.javaClass.simpleName}")
+                            if (paperGraphMode && state.paperGraph?.hasLockedTarget == true && !state.paperGraphCalibration.isComplete) {
+                                val pose = hit.hitPose
+                                onPaperGraphCalibrationTap(
+                                    PaperGraphCalibrationPoint(
+                                        screenX = event.x / viewportWidth.coerceAtLeast(1),
+                                        screenY = event.y / viewportHeight.coerceAtLeast(1),
+                                        worldX = pose.tx(),
+                                        worldY = pose.ty(),
+                                        worldZ = pose.tz()
+                                    )
+                                )
+                                if (anchor == null) {
+                                    onAnchorChanged(hit.createAnchor())
+                                }
+                                return@rememberOnGestureListener
+                            }
                             lastOutdoorGeometryHit = hit.takeIf { it.trackable is StreetscapeGeometry }
                             val geometry = hit.trackable as? StreetscapeGeometry
                             if (geometry != null) {
@@ -661,6 +741,7 @@ private fun ArRuntime(
                                 outdoorMeshAnchor = null
                                 outdoorWireframeEdges = emptyList()
                             }
+                            hit.hitPose.let { pose -> onPlacementPoint(pose.tx(), pose.ty(), pose.tz()) }
                             onAnchorChanged(hit.createAnchor())
                         } else {
                             Log.d(AR_LOG_TAG, "Tap missed all placement hits")
@@ -683,12 +764,25 @@ private fun ArRuntime(
                                     objectState.transform.position.y.toFloat(),
                                     objectState.transform.position.z.toFloat()
                                 ),
-                                rotation = Rotation(y = objectState.transform.rotation.y.toFloat()),
+                                rotation = Rotation(
+                                    y = objectState.transform.rotation.y.toFloat() +
+                                        if (objectState.objectType.isGraphLike() && state.graphAnimationEnabled && state.graphAnimationMode == GraphAnimationMode.RotateGraph) {
+                                            state.graphAnimationProgress * 360f
+                                        } else {
+                                            0f
+                                        }
+                                ),
                                 scale = Scale(objectState.transform.scale.x.toFloat()),
                                 isEditable = !objectState.interactionState.locked
                             ) {
-                                MathObjectNode(objectState.objectType, materialLoader)
+                                MathObjectNode(objectState.objectType, materialLoader, state)
                                 if (objectState.interactionState.selected) SelectionHighlight(materialLoader)
+                                if (objectState.interactionState.selected && MathArFeature.GestureHandles in state.enabledMathArFeatures) {
+                                    GestureHandleNodes(materialLoader)
+                                }
+                                if (objectState.interactionState.selected && state.compareModeEnabled) {
+                                    CompareGhostNode(objectState.objectType, materialLoader, state)
+                                }
                             }
                         }
                     }
@@ -702,23 +796,29 @@ private fun ArRuntime(
         }
         Reticle(state)
         TrackingHealthOverlay(state)
+        MathInteractionOverlay(state)
     }
 }
 
 @Composable
-private fun NodeScope.MathObjectNode(type: MathObjectType, materialLoader: MaterialLoader) {
+private fun NodeScope.MathObjectNode(type: MathObjectType, materialLoader: MaterialLoader, state: ArViewerUiState) {
     val cyan = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF4EE7FF)) }
     val teal = remember(materialLoader) { materialLoader.createColorInstance(Color(0xAA4FD1C5), roughness = 0.35f) }
     val amber = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
     val rose = remember(materialLoader) { materialLoader.createColorInstance(Color(0xAAFF6B8A), roughness = 0.45f) }
     val violet = remember(materialLoader) { materialLoader.createColorInstance(Color(0xAA9B8CFF), roughness = 0.45f) }
+    val graphPrimary = remember(materialLoader, state.graphColorMap) { materialLoader.createUnlitColorInstance(state.graphColorMap.primaryColor()) }
+    val graphSecondary = remember(materialLoader, state.graphColorMap) { materialLoader.createUnlitColorInstance(state.graphColorMap.secondaryColor()) }
+    val graphPalette = remember(materialLoader, state.graphColorMap) {
+        state.graphColorMap.palette().map { materialLoader.createUnlitColorInstance(it) }
+    }
     when (type) {
         MathObjectType.Cube -> {
             CubeNode(size = Size(0.24f, 0.24f, 0.24f), center = Position(0f, 0.12f, 0f), materialInstance = teal)
             CubeEdges(cyan)
         }
-        MathObjectType.CoordinatePlane -> CoordinatePlaneNode(cyan, amber)
-        MathObjectType.SineCurve -> SineCurveNode(cyan, amber)
+        MathObjectType.CoordinatePlane -> CoordinatePlaneNode(graphPrimary, graphSecondary)
+        MathObjectType.SineCurve -> SineCurveNode(graphPrimary, graphSecondary, graphPalette, state)
         MathObjectType.Sphere -> SphereApproxNode(cyan, teal)
         MathObjectType.Cylinder -> CylinderApproxNode(cyan, teal)
         MathObjectType.Cone -> ConeApproxNode(cyan, amber)
@@ -732,6 +832,51 @@ private fun NodeScope.MathObjectNode(type: MathObjectType, materialLoader: Mater
         MathObjectType.VectorArrow -> VectorArrowNode(cyan, amber)
     }
 }
+
+private fun MathObjectType.isGraphLike(): Boolean =
+    this in setOf(MathObjectType.SineCurve, MathObjectType.CoordinatePlane, MathObjectType.NumberLine, MathObjectType.VectorArrow)
+
+private fun GraphColorMap.palette(): List<Color> = when (this) {
+    GraphColorMap.Height -> listOf(
+        Color(0xFF14213D),
+        Color(0xFF1B9AAA),
+        Color(0xFF3DFF9F),
+        Color(0xFFFFD166),
+        Color(0xFFFF4D6D)
+    )
+    GraphColorMap.Slope -> listOf(
+        Color(0xFF0B132B),
+        Color(0xFF5BC0BE),
+        Color(0xFFFFF275),
+        Color(0xFFFF8C42),
+        Color(0xFFE71D36)
+    )
+    GraphColorMap.Curvature -> listOf(
+        Color(0xFF240046),
+        Color(0xFF7B2CBF),
+        Color(0xFFFF6DCD),
+        Color(0xFFFFD6FF),
+        Color(0xFF4CC9F0)
+    )
+    GraphColorMap.XValue -> listOf(
+        Color(0xFF003049),
+        Color(0xFF118AB2),
+        Color(0xFF06D6A0),
+        Color(0xFFFFD166),
+        Color(0xFFEF476F)
+    )
+    GraphColorMap.YValue -> listOf(
+        Color(0xFF2D00F7),
+        Color(0xFF6A00F4),
+        Color(0xFFB100E8),
+        Color(0xFFFF6D00),
+        Color(0xFFFFEA00)
+    )
+}
+
+private fun GraphColorMap.primaryColor(): Color = palette()[2]
+
+private fun GraphColorMap.secondaryColor(): Color = palette()[4]
 
 private data class PlacementCandidate(val hit: HitResult, val placementHitKind: PlacementHitKind)
 
@@ -974,6 +1119,32 @@ private fun NodeScope.SelectionHighlight(materialLoader: MaterialLoader) {
 }
 
 @Composable
+private fun NodeScope.GestureHandleNodes(materialLoader: MaterialLoader) {
+    val rotate = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
+    val scale = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF3DFF9F)) }
+    val lift = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF42A5F5)) }
+    CubeNode(Size(0.026f, 0.026f, 0.026f), center = Position(0.22f, 0.12f, 0f), materialInstance = rotate)
+    CubeNode(Size(0.026f, 0.026f, 0.026f), center = Position(0f, 0.28f, 0f), materialInstance = lift)
+    CubeNode(Size(0.026f, 0.026f, 0.026f), center = Position(-0.22f, 0.12f, 0f), materialInstance = scale)
+    LineNode(Position(0f, 0.12f, 0f), Position(0.22f, 0.12f, 0f), rotate)
+    LineNode(Position(0f, 0.12f, 0f), Position(0f, 0.28f, 0f), lift)
+    LineNode(Position(0f, 0.12f, 0f), Position(-0.22f, 0.12f, 0f), scale)
+}
+
+@Composable
+private fun NodeScope.CompareGhostNode(type: MathObjectType, materialLoader: MaterialLoader, state: ArViewerUiState) {
+    val ghost = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x886EDBFF)) }
+    Node(position = Position(state.compareOffsetMeters, 0f, 0f), scale = Scale(0.82f)) {
+        when (type) {
+            MathObjectType.SineCurve -> CoordinatePlaneNode(ghost, ghost)
+            MathObjectType.Cube, MathObjectType.RectangularPrism -> BoxEdges(ghost, 0.14f, 0.18f, 0.08f)
+            MathObjectType.Sphere -> CircleLines(0.12f, 0.12f, ghost, y = 0.12f)
+            else -> CoordinatePlaneNode(ghost, ghost)
+        }
+    }
+}
+
+@Composable
 private fun NodeScope.CoordinatePlaneNode(lineMaterial: com.google.android.filament.MaterialInstance, pointMaterial: com.google.android.filament.MaterialInstance) {
     val range = -5..5
     range.forEach { i ->
@@ -987,17 +1158,337 @@ private fun NodeScope.CoordinatePlaneNode(lineMaterial: com.google.android.filam
 }
 
 @Composable
-private fun NodeScope.SineCurveNode(lineMaterial: com.google.android.filament.MaterialInstance, accent: com.google.android.filament.MaterialInstance) {
+private fun NodeScope.SineCurveNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState
+) {
+    val phase = if (state.graphAnimationEnabled && state.graphAnimationMode == GraphAnimationMode.AnimateSineWave) {
+        state.graphAnimationProgress * 2f * PI.toFloat()
+    } else {
+        0f
+    }
+    if (state.mathArExperience == MathArExperience.MarkerBasedGraph) {
+        PaperGraphWorksheetNode(lineMaterial, accent, palette, state, phase)
+        return
+    }
     LineNode(Position(-0.26f, 0.004f, 0f), Position(0.26f, 0.004f, 0f), accent)
     LineNode(Position(0f, 0.004f, -0.12f), Position(0f, 0.004f, 0.12f), accent)
-    val samples = SineCurveSampler.sample(64)
-    samples.zipWithNext().forEach { (a, b) ->
+    if (state.mathArExperience == MathArExperience.Drawing2dTo3d) {
+        Function3dTransformNode(lineMaterial, accent, palette, state, phase)
+        return
+    }
+    val progress = if (state.graphAnimationEnabled && state.graphAnimationMode in setOf(GraphAnimationMode.SweepArea, GraphAnimationMode.BuildVolume)) {
+        state.graphAnimationProgress.coerceIn(0.08f, 1f)
+    } else {
+        1f
+    }
+    val samples = SineCurveSampler.sample(64, phaseShift = phase, rangeMax = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * progress)
+    samples.zipWithNext().forEachIndexed { index, (a, b) ->
+        val ay = functionValue(state, a.x, phase)
+        val by = functionValue(state, b.x, phase)
+        val material = graphSegmentMaterial(state, index, a.x, ay, by, palette)
         LineNode(
-            start = Position((a.x / (2f * PI.toFloat())) * 0.24f, 0.012f, a.y * 0.08f),
-            end = Position((b.x / (2f * PI.toFloat())) * 0.24f, 0.012f, b.y * 0.08f),
-            materialInstance = lineMaterial
+            start = Position((a.x / (2f * PI.toFloat())) * 0.24f, 0.012f, ay * 0.08f),
+            end = Position((b.x / (2f * PI.toFloat())) * 0.24f, 0.012f, by * 0.08f),
+            materialInstance = material
         )
     }
+    if (MathArFeature.RootVisualizer in state.enabledMathArFeatures) {
+        listOf(-PI.toFloat(), 0f, PI.toFloat()).forEach { root ->
+            CubeNode(Size(0.018f, 0.018f, 0.018f), center = Position((root / (2f * PI.toFloat())) * 0.24f, 0.028f, 0f), materialInstance = accent)
+        }
+    }
+    if (MathArFeature.AreaUnderCurve in state.enabledMathArFeatures) {
+        samples.filterIndexed { index, sample -> index % 8 == 0 && functionValue(state, sample.x, phase) > 0f }.forEach { sample ->
+            val x = (sample.x / (2f * PI.toFloat())) * 0.24f
+            val z = functionValue(state, sample.x, phase) * 0.08f
+            LineNode(Position(x, 0.012f, 0f), Position(x, 0.012f, z), accent)
+        }
+    }
+    if (state.graphAnimationEnabled && state.graphAnimationMode == GraphAnimationMode.BuildVolume || MathArFeature.VolumeBuilder in state.enabledMathArFeatures) {
+        samples.filterIndexed { index, _ -> index % 8 == 0 }.forEach { sample ->
+            val x = (sample.x / (2f * PI.toFloat())) * 0.24f
+            val z = functionValue(state, sample.x, phase) * 0.08f
+            LineNode(Position(x, 0.012f, z), Position(x, 0.12f * state.graphAnimationProgress, z), accent)
+        }
+    }
+    if (state.graphAnimationEnabled && state.graphAnimationMode == GraphAnimationMode.MoveTangentPoint || MathArFeature.TangentNormalTool in state.enabledMathArFeatures) {
+        val xValue = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * state.graphAnimationProgress
+        val yValue = functionValue(state, xValue, phase)
+        val x = (xValue / (2f * PI.toFloat())) * 0.24f
+        val z = yValue * 0.08f
+        CubeNode(Size(0.028f, 0.028f, 0.028f), center = Position(x, 0.03f, z), materialInstance = accent)
+        LineNode(Position(x - 0.08f, 0.026f, z - cos(xValue) * 0.08f), Position(x + 0.08f, 0.026f, z + cos(xValue) * 0.08f), accent)
+        LineNode(Position(x - 0.045f, 0.026f, z + 0.08f), Position(x + 0.045f, 0.026f, z - 0.08f), lineMaterial)
+    }
+}
+
+@Composable
+private fun NodeScope.PaperGraphWorksheetNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState,
+    phase: Float
+) {
+    if (PaperGraphLayer.Axes in state.paperGraphLayers) {
+        LineNode(Position(-0.26f, 0.006f, 0f), Position(0.26f, 0.006f, 0f), accent)
+        LineNode(Position(0f, 0.006f, -0.15f), Position(0f, 0.006f, 0.15f), accent)
+        calibrationMarkers(state, accent)
+    }
+    if (PaperGraphLayer.Scale in state.paperGraphLayers) {
+        (-5..5).forEach { tick ->
+            val x = tick * 0.048f
+            LineNode(Position(x, 0.008f, -0.008f), Position(x, 0.008f, 0.008f), lineMaterial)
+            val z = tick * 0.028f
+            LineNode(Position(-0.008f, 0.008f, z), Position(0.008f, 0.008f, z), lineMaterial)
+        }
+    }
+    if (PaperGraphLayer.Graph in state.paperGraphLayers) {
+        val samples = functionXSamples(64, 1f)
+        samples.zipWithNext().forEachIndexed { index, (a, b) ->
+            LineNode(
+                Position(graphX(a), 0.018f, functionValue(state, a, phase) * 0.085f),
+                Position(graphX(b), 0.018f, functionValue(state, b, phase) * 0.085f),
+                graphSegmentMaterial(state, index, a, functionValue(state, a, phase), functionValue(state, b, phase), palette)
+            )
+        }
+    }
+    if (PaperGraphLayer.Surface3d in state.paperGraphLayers) {
+        FunctionSurfaceNode(lineMaterial, accent, palette, state.copy(graphAnimationProgress = 1f), phase)
+    }
+    if (PaperGraphLayer.CrossSection in state.paperGraphLayers) {
+        FunctionCrossSectionNode(lineMaterial, accent, palette, state.copy(graphAnimationProgress = 1f), phase)
+    }
+}
+
+@Composable
+private fun NodeScope.calibrationMarkers(
+    state: ArViewerUiState,
+    accent: MaterialInstance
+) {
+    val calibration = state.paperGraphCalibration
+    if (calibration.originLocked) {
+        CubeNode(Size(0.018f, 0.018f, 0.018f), center = Position(0f, 0.025f, 0f), materialInstance = accent)
+    }
+    if (calibration.xAxisLocked) {
+        CubeNode(Size(0.016f, 0.016f, 0.016f), center = Position(0.12f, 0.025f, 0f), materialInstance = accent)
+        LineNode(Position(0f, 0.018f, 0f), Position(0.12f, 0.018f, 0f), accent)
+    }
+    if (calibration.yAxisLocked) {
+        CubeNode(Size(0.016f, 0.016f, 0.016f), center = Position(0f, 0.025f, 0.09f), materialInstance = accent)
+        LineNode(Position(0f, 0.018f, 0f), Position(0f, 0.018f, 0.09f), accent)
+    }
+}
+
+@Composable
+private fun NodeScope.Function3dTransformNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState,
+    phase: Float
+) {
+    when (state.function3dTransformMode) {
+        Function3dTransformMode.Surface -> FunctionSurfaceNode(lineMaterial, accent, palette, state, phase)
+        Function3dTransformMode.Extrusion -> FunctionExtrusionNode(lineMaterial, accent, palette, state, phase)
+        Function3dTransformMode.SolidOfRevolution -> FunctionRevolutionNode(lineMaterial, accent, palette, state, phase)
+        Function3dTransformMode.TangentPlane -> FunctionTangentPlaneNode(lineMaterial, accent, palette, state, phase)
+        Function3dTransformMode.CrossSectionSlices -> FunctionCrossSectionNode(lineMaterial, accent, palette, state, phase)
+    }
+}
+
+@Composable
+private fun NodeScope.FunctionSurfaceNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState,
+    phase: Float
+) {
+    val progress = transformProgress(state)
+    val xSamples = functionXSamples(36, progress)
+    val zSamples = (-4..4).map { it * 0.032f }
+    zSamples.forEachIndexed { zIndex, z ->
+        xSamples.zipWithNext().forEachIndexed { xIndex, (a, b) ->
+            val ya = functionValue(state, a, phase) + z * 2.5f
+            val yb = functionValue(state, b, phase) + z * 2.5f
+            val material = graphSegmentMaterial(state, xIndex + zIndex, a, ya, yb, palette)
+            LineNode(
+                graphPoint(state, a, z, phase),
+                graphPoint(state, b, z, phase),
+                material
+            )
+        }
+    }
+    xSamples.filterIndexed { index, _ -> index % 4 == 0 }.forEach { x ->
+        zSamples.zipWithNext().forEach { (a, b) ->
+            LineNode(graphPoint(state, x, a, phase), graphPoint(state, x, b, phase), accent)
+        }
+    }
+}
+
+@Composable
+private fun NodeScope.FunctionExtrusionNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState,
+    phase: Float
+) {
+    val xSamples = functionXSamples(42, transformProgress(state))
+    val depths = listOf(-0.07f, 0.07f)
+    depths.forEach { z ->
+        xSamples.zipWithNext().forEachIndexed { index, (a, b) ->
+            LineNode(graphPoint(state, a, z, phase), graphPoint(state, b, z, phase), graphSegmentMaterial(state, index, a, functionValue(state, a, phase), functionValue(state, b, phase), palette))
+        }
+    }
+    xSamples.filterIndexed { index, _ -> index % 3 == 0 }.forEach { x ->
+        val y = functionHeight(state, x, phase)
+        depths.forEach { z ->
+            LineNode(Position(graphX(x), 0.012f, z), Position(graphX(x), y, z), accent)
+        }
+        LineNode(Position(graphX(x), y, depths.first()), Position(graphX(x), y, depths.last()), lineMaterial)
+    }
+}
+
+@Composable
+private fun NodeScope.FunctionRevolutionNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState,
+    phase: Float
+) {
+    val xSamples = functionXSamples(26, transformProgress(state))
+    val angleSamples = (0..16).map { it * (2f * PI.toFloat() / 16f) }
+    xSamples.forEachIndexed { index, x ->
+        val radius = 0.025f + abs(functionValue(state, x, phase)) * 0.085f
+        angleSamples.zipWithNext().forEach { (a, b) ->
+            LineNode(
+                Position(graphX(x), 0.09f + radius * cos(a), radius * sin(a)),
+                Position(graphX(x), 0.09f + radius * cos(b), radius * sin(b)),
+                graphSegmentMaterial(state, index, x, radius, radius * cos(a), palette)
+            )
+        }
+    }
+    angleSamples.filterIndexed { index, _ -> index % 4 == 0 }.forEach { angle ->
+        xSamples.zipWithNext().forEach { (a, b) ->
+            val ra = 0.025f + abs(functionValue(state, a, phase)) * 0.085f
+            val rb = 0.025f + abs(functionValue(state, b, phase)) * 0.085f
+            LineNode(
+                Position(graphX(a), 0.09f + ra * cos(angle), ra * sin(angle)),
+                Position(graphX(b), 0.09f + rb * cos(angle), rb * sin(angle)),
+                accent
+            )
+        }
+    }
+}
+
+@Composable
+private fun NodeScope.FunctionTangentPlaneNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState,
+    phase: Float
+) {
+    FunctionSurfaceNode(lineMaterial, accent, palette, state.copy(graphAnimationProgress = 1f), phase)
+    val x0 = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * state.graphAnimationProgress.coerceIn(0f, 1f)
+    val f0 = functionHeight(state, x0, phase)
+    val slope = cos(x0 + phase) * 0.045f
+    val xOffsets = (-3..3).map { it * 0.026f }
+    val zOffsets = (-3..3).map { it * 0.026f }
+    xOffsets.forEach { dx ->
+        zOffsets.zipWithNext().forEach { (za, zb) ->
+            LineNode(tangentPlanePoint(x0, f0, slope, dx, za), tangentPlanePoint(x0, f0, slope, dx, zb), accent)
+        }
+    }
+    zOffsets.forEach { z ->
+        xOffsets.zipWithNext().forEach { (a, b) ->
+            LineNode(tangentPlanePoint(x0, f0, slope, a, z), tangentPlanePoint(x0, f0, slope, b, z), accent)
+        }
+    }
+    CubeNode(Size(0.022f, 0.022f, 0.022f), center = Position(graphX(x0), f0, 0f), materialInstance = accent)
+}
+
+@Composable
+private fun NodeScope.FunctionCrossSectionNode(
+    lineMaterial: MaterialInstance,
+    accent: MaterialInstance,
+    palette: List<MaterialInstance>,
+    state: ArViewerUiState,
+    phase: Float
+) {
+    FunctionSurfaceNode(lineMaterial, accent, palette, state.copy(graphAnimationProgress = 1f), phase)
+    val z = -0.128f + 0.256f * state.graphSlicePosition.coerceIn(0f, 1f)
+    val xSamples = functionXSamples(42, 1f)
+    xSamples.zipWithNext().forEach { (a, b) ->
+        LineNode(graphPoint(state, a, z, phase), graphPoint(state, b, z, phase), accent)
+    }
+    xSamples.filterIndexed { index, _ -> index % 6 == 0 }.forEach { x ->
+        LineNode(Position(graphX(x), 0.012f, z), graphPoint(state, x, z, phase), accent)
+    }
+    LineNode(Position(-0.24f, 0.012f, z), Position(0.24f, 0.012f, z), accent)
+}
+
+private fun functionXSamples(segments: Int, progress: Float): List<Float> {
+    val rangeMin = SineCurveSampler.minX
+    val rangeMax = SineCurveSampler.minX + (SineCurveSampler.maxX - SineCurveSampler.minX) * progress.coerceIn(0.08f, 1f)
+    val step = (rangeMax - rangeMin) / segments
+    return (0..segments).map { rangeMin + step * it }
+}
+
+private fun graphX(x: Float): Float = (x / (2f * PI.toFloat())) * 0.24f
+
+private fun functionValue(state: ArViewerUiState, x: Float, phase: Float): Float {
+    val clean = state.liveEquation.lowercase().replace(" ", "")
+    val shifted = x + phase
+    return when {
+        "cos" in clean -> cos(shifted)
+        "x^2" in clean || "x2" in clean || "parabola" in clean -> ((x / PI.toFloat()) * (x / PI.toFloat()) - 1f).coerceIn(-1.25f, 1.25f)
+        "2x" in clean || "2*x" in clean -> (2f * x / PI.toFloat()).coerceIn(-1.25f, 1.25f)
+        "0.5x" in clean || "0.5*x" in clean -> (0.5f * x / PI.toFloat()).coerceIn(-1.25f, 1.25f)
+        clean.contains("x") && !clean.contains("sin") -> (x / PI.toFloat()).coerceIn(-1.25f, 1.25f)
+        else -> sin(shifted)
+    }
+}
+
+private fun functionHeight(state: ArViewerUiState, x: Float, phase: Float): Float = 0.08f + functionValue(state, x, phase) * 0.06f
+
+private fun graphPoint(state: ArViewerUiState, x: Float, z: Float, phase: Float): Position =
+    Position(graphX(x), functionHeight(state, x, phase), z)
+
+private fun tangentPlanePoint(x0: Float, f0: Float, slope: Float, dx: Float, z: Float): Position =
+    Position(graphX(x0) + dx, f0 + dx * slope + z * 0.12f, z)
+
+private fun transformProgress(state: ArViewerUiState): Float =
+    if (state.graphAnimationEnabled && state.graphAnimationMode in setOf(GraphAnimationMode.SweepArea, GraphAnimationMode.BuildVolume)) {
+        state.graphAnimationProgress.coerceIn(0.08f, 1f)
+    } else {
+        1f
+    }
+
+private fun graphSegmentMaterial(
+    state: ArViewerUiState,
+    index: Int,
+    xValue: Float,
+    yValue: Float,
+    nextYValue: Float,
+    palette: List<MaterialInstance>
+): MaterialInstance {
+    val normalized = when (state.graphColorMap) {
+        GraphColorMap.Height -> ((yValue + 1f) / 2f).coerceIn(0f, 1f)
+        GraphColorMap.Slope -> (abs(nextYValue - yValue) * 2.8f).coerceIn(0f, 1f)
+        GraphColorMap.Curvature -> (abs(sin(xValue) * cos(xValue)) * 1.7f).coerceIn(0f, 1f)
+        GraphColorMap.XValue -> ((xValue - SineCurveSampler.minX) / (SineCurveSampler.maxX - SineCurveSampler.minX)).coerceIn(0f, 1f)
+        GraphColorMap.YValue -> ((nextYValue + 1f) / 2f).coerceIn(0f, 1f)
+    }
+    val animatedShift = if (state.graphAnimationEnabled) state.graphAnimationProgress * 0.18f else 0f
+    val paletteIndex = (((normalized + animatedShift).coerceIn(0f, 1f)) * (palette.lastIndex)).toInt().coerceIn(0, palette.lastIndex)
+    return palette.getOrElse(paletteIndex) { palette.first() }
 }
 
 @Composable
@@ -1111,6 +1602,22 @@ private fun ArChrome(
     onHelp: () -> Unit,
     onSelectObject: (MathObjectType) -> Unit,
     onSelectArEngineMode: (ArEngineMode) -> Unit,
+    onSelectMathExperience: (MathArExperience) -> Unit,
+    onFloatingTool: (FloatingMathTool) -> Unit,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onFunction3dTransform: (Function3dTransformMode) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onAnimationMode: (GraphAnimationMode) -> Unit,
+    onSlicePosition: (Float) -> Unit,
+    onCalibrationStep: () -> Unit,
+    onPaperGraphLayer: (PaperGraphLayer) -> Unit,
+    onFeaturePhase: (ArFeaturePhase) -> Unit,
+    onToggleMathArFeature: (MathArFeature) -> Unit,
+    onLiveEquation: (String) -> Unit,
+    onAddPointLabel: () -> Unit,
+    onAddRulerAnchor: () -> Unit,
+    onCompareOffset: (Float) -> Unit,
+    onCapture: () -> Unit,
     onReplace: () -> Unit,
     onMove: () -> Unit,
     onRePlace: () -> Unit,
@@ -1155,7 +1662,11 @@ private fun ArChrome(
             }
         }
         val selected = state.mathScene.primarySelectedObject
-        val menuDefinitions = activeMenu.definitions()
+        val availableMenus = state.availablePlacementMenus()
+        LaunchedEffect(state.arEngineMode, state.mathArExperience) {
+            if (activeMenu !in availableMenus) activeMenu = availableMenus.first()
+        }
+        val menuDefinitions = activeMenu.definitions(state.mathArExperience)
         Column(
             Modifier
                 .fillMaxWidth()
@@ -1170,6 +1681,13 @@ private fun ArChrome(
                 onToggle = { controlsExpanded = !controlsExpanded },
                 onRePlace = onRePlace
             )
+            FloatingMathToolbar(
+                state = state,
+                onTool = {
+                    if (it == FloatingMathTool.Capture) onCapture()
+                    onFloatingTool(it)
+                }
+            )
             if (controlsExpanded) {
                 Column(
                     Modifier
@@ -1178,20 +1696,42 @@ private fun ArChrome(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    ArModeSwitcher(
+                        selected = state.arEngineMode,
+                        onSelect = onSelectArEngineMode
+                    )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(ArEngineMode.entries) { mode ->
+                        items(state.availableMathExperiences()) { experience ->
                             FilterChip(
-                                selected = state.arEngineMode == mode,
-                                onClick = { onSelectArEngineMode(mode) },
-                                label = { Text(mode.label) }
+                                selected = state.mathArExperience == experience,
+                                onClick = { onSelectMathExperience(experience) },
+                                label = { Text(experience.label()) }
                             )
                         }
                     }
-                    if (state.arEngineMode == ArEngineMode.OutdoorGeospatialMath) {
-                        OutdoorGeospatialMathPanel(state)
-                    }
+                    MathExperiencePanel(
+                        state = state,
+                        onCalibrationStep = onCalibrationStep,
+                        onGraphColorMap = onGraphColorMap,
+                        onFunction3dTransform = onFunction3dTransform,
+                        onAnimationProgress = onAnimationProgress,
+                        onAnimationMode = onAnimationMode,
+                        onSlicePosition = onSlicePosition,
+                        onLayers = onLayers,
+                        onPaperGraphLayer = onPaperGraphLayer,
+                        onFeaturePhase = onFeaturePhase,
+                        onToggleMathArFeature = onToggleMathArFeature,
+                        onLiveEquation = onLiveEquation,
+                        onAddPointLabel = onAddPointLabel,
+                        onAddRulerAnchor = onAddRulerAnchor,
+                        onCompareOffset = onCompareOffset,
+                        onCapture = {
+                            onCapture()
+                            onFloatingTool(FloatingMathTool.Capture)
+                        }
+                    )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(ArPlacementMenu.entries) { menu ->
+                        items(availableMenus) { menu ->
                             FilterChip(
                                 selected = activeMenu == menu,
                                 onClick = { activeMenu = menu },
@@ -1201,17 +1741,11 @@ private fun ArChrome(
                     }
                     if (activeMenu != ArPlacementMenu.Scene) {
                         Text(activeMenu.description, style = MaterialTheme.typography.bodySmall)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(menuDefinitions) { item ->
-                                FilterChip(
-                                    selected = state.selectedDefinitionId == item.definitionId,
-                                    onClick = { onSelectObject(item.type) },
-                                    label = { Text(item.displayName) },
-                                    leadingIcon = { ObjectPreviewDot(item.type) },
-                                    modifier = Modifier.semantics { contentDescription = "Select ${item.displayName}" }
-                                )
-                            }
-                        }
+                        VisualObjectTray(
+                            items = activeMenu.visualTrayItems(state.mathArExperience, menuDefinitions),
+                            selectedDefinitionId = state.selectedDefinitionId,
+                            onSelectObject = onSelectObject
+                        )
                     }
                     if (activeMenu == ArPlacementMenu.Functions) {
                         FunctionGraphDetails(state)
@@ -1262,17 +1796,313 @@ private enum class ArPlacementMenu(val label: String, val description: String) {
     Functions("Functions", "Place and inspect sine functions, expressions, and curve behavior."),
     Graphs("Graphs", "Place coordinate planes, number lines, and graphing tools."),
     Objects("Objects", "Place geometric solids and shapes."),
+    Solar("Solar", "Build orbit models, scale comparisons, and planet paths."),
     Scene("Scene", "Select, transform, save, and diagnose the AR scene.");
 
-    fun definitions(): List<MathObjectDefinition> = when (this) {
+    fun definitions(experience: MathArExperience): List<MathObjectDefinition> = when (this) {
         Functions -> DefaultMathObjectRegistry.getDefinitionsByCategory(MathObjectCategory.Graphs)
             .filter { it.type == MathObjectType.SineCurve }
         Graphs -> DefaultMathObjectRegistry.getAllDefinitions()
             .filter { it.category in setOf(MathObjectCategory.Graphs, MathObjectCategory.Coordinates, MathObjectCategory.NumberTools, MathObjectCategory.Vectors) }
         Objects -> DefaultMathObjectRegistry.getAllDefinitions()
-            .filter { it.category in setOf(MathObjectCategory.Shapes, MathObjectCategory.Solids) }
+            .filter {
+                it.category in setOf(MathObjectCategory.Shapes, MathObjectCategory.Solids) &&
+                    (experience != MathArExperience.Drawing2dTo3d || it.type in setOf(MathObjectType.RectangularPrism, MathObjectType.Cylinder, MathObjectType.Cone, MathObjectType.Sphere))
+            }
+        Solar -> DefaultMathObjectRegistry.getAllDefinitions()
+            .filter { it.type in setOf(MathObjectType.Sphere, MathObjectType.Circle, MathObjectType.VectorArrow, MathObjectType.NumberLine) }
         Scene -> emptyList()
     }
+}
+
+private enum class ObjectPreviewKind { Cube, Sphere, SineWave, Parabola, Vector, CoordinatePlane, Surface, Cylinder, Cone, Prism, Circle, NumberLine, Triangle }
+
+private data class VisualTrayItem(
+    val label: String,
+    val type: MathObjectType,
+    val definitionId: String,
+    val preview: ObjectPreviewKind
+)
+
+private fun ArPlacementMenu.visualTrayItems(
+    experience: MathArExperience,
+    definitions: List<MathObjectDefinition>
+): List<VisualTrayItem> {
+    if (this == ArPlacementMenu.Functions) {
+        val sine = definitions.firstOrNull { it.type == MathObjectType.SineCurve }
+        if (sine != null) {
+            return buildList {
+                add(VisualTrayItem("Sine wave", sine.type, sine.definitionId, ObjectPreviewKind.SineWave))
+                add(VisualTrayItem("Parabola", sine.type, sine.definitionId, ObjectPreviewKind.Parabola))
+                if (experience in setOf(MathArExperience.Drawing2dTo3d, MathArExperience.MarkerBasedGraph)) {
+                    add(VisualTrayItem("Surface", sine.type, sine.definitionId, ObjectPreviewKind.Surface))
+                }
+            }
+        }
+    }
+    return definitions.map {
+        VisualTrayItem(
+            label = it.displayName,
+            type = it.type,
+            definitionId = it.definitionId,
+            preview = it.type.previewKind()
+        )
+    }
+}
+
+private fun MathObjectType.previewKind(): ObjectPreviewKind = when (this) {
+    MathObjectType.Cube -> ObjectPreviewKind.Cube
+    MathObjectType.Sphere -> ObjectPreviewKind.Sphere
+    MathObjectType.SineCurve -> ObjectPreviewKind.SineWave
+    MathObjectType.VectorArrow -> ObjectPreviewKind.Vector
+    MathObjectType.CoordinatePlane -> ObjectPreviewKind.CoordinatePlane
+    MathObjectType.Cylinder -> ObjectPreviewKind.Cylinder
+    MathObjectType.Cone -> ObjectPreviewKind.Cone
+    MathObjectType.RectangularPrism -> ObjectPreviewKind.Prism
+    MathObjectType.Circle -> ObjectPreviewKind.Circle
+    MathObjectType.NumberLine -> ObjectPreviewKind.NumberLine
+    MathObjectType.Triangle -> ObjectPreviewKind.Triangle
+}
+
+@Composable
+private fun VisualObjectTray(
+    items: List<VisualTrayItem>,
+    selectedDefinitionId: String,
+    onSelectObject: (MathObjectType) -> Unit
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(items) { item ->
+            VisualObjectCard(
+                item = item,
+                selected = selectedDefinitionId == item.definitionId,
+                onSelect = { onSelectObject(item.type) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun VisualObjectCard(
+    item: VisualTrayItem,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    val accent = item.preview.previewColor()
+    Surface(
+        modifier = Modifier
+            .width(112.dp)
+            .height(116.dp)
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onSelect)
+            .semantics { contentDescription = "Select ${item.label}" },
+        color = if (selected) accent.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        shape = MaterialTheme.shapes.small
+    ) {
+        Column(
+            Modifier.padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            ObjectPreviewCanvas(item.preview, accent, Modifier.fillMaxWidth().height(64.dp))
+            Text(item.label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun ObjectPreviewCanvas(kind: ObjectPreviewKind, accent: Color, modifier: Modifier = Modifier) {
+    val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f)
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = 3.2f
+        when (kind) {
+            ObjectPreviewKind.Cube -> {
+                drawRect(accent.copy(alpha = 0.22f), topLeft = Offset(w * 0.24f, h * 0.28f), size = DrawSize(w * 0.36f, h * 0.36f))
+                drawRect(accent, topLeft = Offset(w * 0.24f, h * 0.28f), size = DrawSize(w * 0.36f, h * 0.36f), style = Stroke(stroke))
+                drawRect(muted, topLeft = Offset(w * 0.38f, h * 0.16f), size = DrawSize(w * 0.36f, h * 0.36f), style = Stroke(stroke))
+                listOf(Offset(w * 0.24f, h * 0.28f) to Offset(w * 0.38f, h * 0.16f), Offset(w * 0.60f, h * 0.28f) to Offset(w * 0.74f, h * 0.16f), Offset(w * 0.60f, h * 0.64f) to Offset(w * 0.74f, h * 0.52f)).forEach { (a, b) -> drawLine(muted, a, b, stroke) }
+            }
+            ObjectPreviewKind.Sphere -> {
+                drawCircle(accent.copy(alpha = 0.24f), radius = h * 0.28f, center = Offset(w * 0.5f, h * 0.5f))
+                drawCircle(accent, radius = h * 0.28f, center = Offset(w * 0.5f, h * 0.5f), style = Stroke(stroke))
+                drawOval(muted, topLeft = Offset(w * 0.23f, h * 0.42f), size = DrawSize(w * 0.54f, h * 0.16f), style = Stroke(stroke))
+            }
+            ObjectPreviewKind.SineWave -> drawWave(accent, muted, stroke, parabola = false)
+            ObjectPreviewKind.Parabola -> drawWave(accent, muted, stroke, parabola = true)
+            ObjectPreviewKind.Vector -> {
+                drawLine(muted, Offset(w * 0.18f, h * 0.72f), Offset(w * 0.82f, h * 0.26f), stroke * 1.4f)
+                drawLine(accent, Offset(w * 0.82f, h * 0.26f), Offset(w * 0.64f, h * 0.26f), stroke * 1.4f)
+                drawLine(accent, Offset(w * 0.82f, h * 0.26f), Offset(w * 0.75f, h * 0.44f), stroke * 1.4f)
+            }
+            ObjectPreviewKind.CoordinatePlane -> {
+                for (i in 1..4) {
+                    val x = w * (0.18f + i * 0.16f)
+                    val y = h * (0.18f + i * 0.16f)
+                    drawLine(muted.copy(alpha = 0.45f), Offset(x, h * 0.16f), Offset(x, h * 0.84f), 1.4f)
+                    drawLine(muted.copy(alpha = 0.45f), Offset(w * 0.16f, y), Offset(w * 0.84f, y), 1.4f)
+                }
+                drawLine(accent, Offset(w * 0.16f, h * 0.5f), Offset(w * 0.84f, h * 0.5f), stroke)
+                drawLine(accent, Offset(w * 0.5f, h * 0.84f), Offset(w * 0.5f, h * 0.16f), stroke)
+            }
+            ObjectPreviewKind.Surface -> {
+                for (row in 0..4) {
+                    val y = h * (0.28f + row * 0.1f)
+                    drawLine(if (row % 2 == 0) accent else muted, Offset(w * 0.18f, y + row * 2f), Offset(w * 0.82f, y - row * 3f), stroke * 0.75f)
+                }
+                for (col in 0..5) {
+                    val x = w * (0.2f + col * 0.12f)
+                    drawLine(muted, Offset(x, h * 0.28f), Offset(x + w * 0.08f, h * 0.68f), stroke * 0.65f)
+                }
+            }
+            ObjectPreviewKind.Cylinder -> {
+                drawOval(accent, Offset(w * 0.28f, h * 0.18f), DrawSize(w * 0.44f, h * 0.18f), style = Stroke(stroke))
+                drawOval(accent, Offset(w * 0.28f, h * 0.62f), DrawSize(w * 0.44f, h * 0.18f), style = Stroke(stroke))
+                drawLine(muted, Offset(w * 0.28f, h * 0.27f), Offset(w * 0.28f, h * 0.71f), stroke)
+                drawLine(muted, Offset(w * 0.72f, h * 0.27f), Offset(w * 0.72f, h * 0.71f), stroke)
+            }
+            ObjectPreviewKind.Cone -> {
+                drawOval(accent, Offset(w * 0.25f, h * 0.66f), DrawSize(w * 0.5f, h * 0.16f), style = Stroke(stroke))
+                drawLine(muted, Offset(w * 0.5f, h * 0.18f), Offset(w * 0.25f, h * 0.74f), stroke)
+                drawLine(muted, Offset(w * 0.5f, h * 0.18f), Offset(w * 0.75f, h * 0.74f), stroke)
+            }
+            ObjectPreviewKind.Prism -> {
+                drawRect(accent.copy(alpha = 0.18f), Offset(w * 0.22f, h * 0.36f), DrawSize(w * 0.52f, h * 0.26f))
+                drawRect(accent, Offset(w * 0.22f, h * 0.36f), DrawSize(w * 0.52f, h * 0.26f), style = Stroke(stroke))
+                drawRect(muted, Offset(w * 0.34f, h * 0.22f), DrawSize(w * 0.52f, h * 0.26f), style = Stroke(stroke))
+            }
+            ObjectPreviewKind.Circle -> {
+                drawCircle(accent.copy(alpha = 0.18f), h * 0.28f, Offset(w * 0.5f, h * 0.5f))
+                drawCircle(accent, h * 0.28f, Offset(w * 0.5f, h * 0.5f), style = Stroke(stroke))
+            }
+            ObjectPreviewKind.NumberLine -> {
+                drawLine(accent, Offset(w * 0.16f, h * 0.54f), Offset(w * 0.84f, h * 0.54f), stroke)
+                for (i in 0..6) {
+                    val x = w * (0.18f + i * 0.105f)
+                    drawLine(muted, Offset(x, h * 0.44f), Offset(x, h * 0.64f), stroke * 0.75f)
+                }
+            }
+            ObjectPreviewKind.Triangle -> {
+                val a = Offset(w * 0.5f, h * 0.2f)
+                val b = Offset(w * 0.22f, h * 0.76f)
+                val c = Offset(w * 0.8f, h * 0.76f)
+                drawLine(accent, a, b, stroke)
+                drawLine(accent, b, c, stroke)
+                drawLine(accent, c, a, stroke)
+            }
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWave(
+    accent: Color,
+    muted: Color,
+    stroke: Float,
+    parabola: Boolean
+) {
+    drawLine(muted, Offset(size.width * 0.12f, size.height * 0.62f), Offset(size.width * 0.88f, size.height * 0.62f), stroke * 0.6f)
+    drawLine(muted, Offset(size.width * 0.18f, size.height * 0.84f), Offset(size.width * 0.18f, size.height * 0.16f), stroke * 0.6f)
+    val points = (0..28).map { i ->
+        val t = i / 28f
+        val x = size.width * (0.18f + t * 0.68f)
+        val y = if (parabola) {
+            val gx = (t - 0.5f) * 2f
+            size.height * (0.72f - gx * gx * 0.42f)
+        } else {
+            size.height * (0.5f - sin(t * 2f * PI.toFloat()) * 0.25f)
+        }
+        Offset(x, y)
+    }
+    points.zipWithNext().forEach { (a, b) -> drawLine(accent, a, b, stroke) }
+}
+
+private fun ObjectPreviewKind.previewColor(): Color = when (this) {
+    ObjectPreviewKind.Cube -> Color(0xFF62D6C7)
+    ObjectPreviewKind.Sphere -> Color(0xFF9B8CFF)
+    ObjectPreviewKind.SineWave -> Color(0xFFFFC857)
+    ObjectPreviewKind.Parabola -> Color(0xFFFF6B8A)
+    ObjectPreviewKind.Vector -> Color(0xFFEC407A)
+    ObjectPreviewKind.CoordinatePlane -> Color(0xFF6EDBFF)
+    ObjectPreviewKind.Surface -> Color(0xFF3DFF9F)
+    ObjectPreviewKind.Cylinder -> Color(0xFF4FD1C5)
+    ObjectPreviewKind.Cone -> Color(0xFFFFA726)
+    ObjectPreviewKind.Prism -> Color(0xFF7E57C2)
+    ObjectPreviewKind.Circle -> Color(0xFF66BB6A)
+    ObjectPreviewKind.NumberLine -> Color(0xFF42A5F5)
+    ObjectPreviewKind.Triangle -> Color(0xFFFF6B8A)
+}
+
+@Composable
+private fun ArModeSwitcher(
+    selected: ArEngineMode,
+    onSelect: (ArEngineMode) -> Unit
+) {
+    val modes = listOf(
+        ArEngineMode.Indoor,
+        ArEngineMode.PaperGraph,
+        ArEngineMode.OutdoorGeospatialMath,
+        ArEngineMode.SurfacePlacement,
+        ArEngineMode.AirPlacement
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("AR Mode", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(modes) { mode ->
+                FilterChip(
+                    selected = selected == mode,
+                    onClick = { onSelect(mode) },
+                    label = { Text(mode.segmentLabel()) }
+                )
+            }
+        }
+    }
+}
+
+private fun ArEngineMode.segmentLabel(): String = when (this) {
+    ArEngineMode.Indoor -> "Indoor AR"
+    ArEngineMode.PaperGraph -> "Paper Graph"
+    ArEngineMode.OutdoorGeospatialMath -> "Outdoor Geo"
+    ArEngineMode.SurfacePlacement -> "Surface"
+    ArEngineMode.AirPlacement -> "Air"
+}
+
+private fun ArViewerUiState.availableMathExperiences(): List<MathArExperience> = when (arEngineMode) {
+    ArEngineMode.PaperGraph -> listOf(MathArExperience.MarkerBasedGraph)
+    ArEngineMode.OutdoorGeospatialMath -> listOf(MathArExperience.OutdoorGeometry)
+    ArEngineMode.SurfacePlacement,
+    ArEngineMode.AirPlacement,
+    ArEngineMode.Indoor -> listOf(
+        MathArExperience.MarkerlessObjects,
+        MathArExperience.Drawing2dTo3d,
+        MathArExperience.SolarSystem,
+        MathArExperience.SceneTools
+    )
+}
+
+private fun ArViewerUiState.availablePlacementMenus(): List<ArPlacementMenu> = when (arEngineMode) {
+    ArEngineMode.PaperGraph -> listOf(ArPlacementMenu.Graphs, ArPlacementMenu.Functions)
+    ArEngineMode.OutdoorGeospatialMath -> listOf(ArPlacementMenu.Graphs, ArPlacementMenu.Objects)
+    ArEngineMode.SurfacePlacement -> listOf(ArPlacementMenu.Objects, ArPlacementMenu.Graphs, ArPlacementMenu.Scene)
+    ArEngineMode.AirPlacement -> listOf(ArPlacementMenu.Functions, ArPlacementMenu.Graphs, ArPlacementMenu.Solar)
+    ArEngineMode.Indoor -> mathArExperience.placementMenus()
+}
+
+private fun MathArExperience.label(): String = when (this) {
+    MathArExperience.MarkerlessObjects -> "Markerless Math"
+    MathArExperience.Drawing2dTo3d -> "Drawing 2D to 3D"
+    MathArExperience.MarkerBasedGraph -> "Marker-Based Graph"
+    MathArExperience.OutdoorGeometry -> "Outdoor Geometry"
+    MathArExperience.SolarSystem -> "Solar System"
+    MathArExperience.SceneTools -> "Scene Tools"
+}
+
+private fun MathArExperience.placementMenus(): List<ArPlacementMenu> = when (this) {
+    MathArExperience.MarkerlessObjects -> listOf(ArPlacementMenu.Functions, ArPlacementMenu.Graphs, ArPlacementMenu.Objects)
+    MathArExperience.Drawing2dTo3d -> listOf(ArPlacementMenu.Functions, ArPlacementMenu.Graphs, ArPlacementMenu.Objects)
+    MathArExperience.MarkerBasedGraph -> listOf(ArPlacementMenu.Graphs, ArPlacementMenu.Functions, ArPlacementMenu.Objects)
+    MathArExperience.OutdoorGeometry -> listOf(ArPlacementMenu.Graphs, ArPlacementMenu.Objects)
+    MathArExperience.SolarSystem -> listOf(ArPlacementMenu.Solar, ArPlacementMenu.Objects)
+    MathArExperience.SceneTools -> listOf(ArPlacementMenu.Scene)
 }
 
 @Composable
@@ -1366,6 +2196,523 @@ private fun GraphToolDetails(state: ArViewerUiState) {
         AssistChip(onClick = {}, label = { Text("Vectors") })
     }
 }
+
+@Composable
+private fun MathExperiencePanel(
+    state: ArViewerUiState,
+    onCalibrationStep: () -> Unit,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onFunction3dTransform: (Function3dTransformMode) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onAnimationMode: (GraphAnimationMode) -> Unit,
+    onSlicePosition: (Float) -> Unit,
+    onLayers: () -> Unit,
+    onPaperGraphLayer: (PaperGraphLayer) -> Unit,
+    onFeaturePhase: (ArFeaturePhase) -> Unit,
+    onToggleMathArFeature: (MathArFeature) -> Unit,
+    onLiveEquation: (String) -> Unit,
+    onAddPointLabel: () -> Unit,
+    onAddRulerAnchor: () -> Unit,
+    onCompareOffset: (Float) -> Unit,
+    onCapture: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        when (state.mathArExperience) {
+            MathArExperience.MarkerlessObjects -> MarkerlessMathPanel(state)
+            MathArExperience.Drawing2dTo3d -> Drawing2dTo3dPanel(
+                state = state,
+                onGraphColorMap = onGraphColorMap,
+                onFunction3dTransform = onFunction3dTransform,
+                onAnimationProgress = onAnimationProgress,
+                onAnimationMode = onAnimationMode,
+                onSlicePosition = onSlicePosition
+            )
+            MathArExperience.MarkerBasedGraph -> PaperGraphModePanel(
+                state = state,
+                onCalibrationStep = onCalibrationStep,
+                onGraphColorMap = onGraphColorMap,
+                onAnimationProgress = onAnimationProgress,
+                onAnimationMode = onAnimationMode,
+                onSlicePosition = onSlicePosition,
+                onPaperGraphLayer = onPaperGraphLayer
+            )
+            MathArExperience.OutdoorGeometry -> OutdoorGeospatialMathPanel(state)
+            MathArExperience.SolarSystem -> SolarSystemArPanel(state, onAnimationProgress)
+            MathArExperience.SceneTools -> DirectUserEnhancementPanel(
+                state = state,
+                onLayers = onLayers,
+                onCapture = onCapture
+            )
+        }
+        MathArPhaseToolsPanel(
+            state = state,
+            onFeaturePhase = onFeaturePhase,
+            onToggleMathArFeature = onToggleMathArFeature,
+            onLiveEquation = onLiveEquation,
+            onAddPointLabel = onAddPointLabel,
+            onAddRulerAnchor = onAddRulerAnchor,
+            onCompareOffset = onCompareOffset
+        )
+    }
+}
+
+@Composable
+private fun MarkerlessMathPanel(state: ArViewerUiState) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(
+            listOf(
+                "Surface first",
+                "No marker",
+                "Objects ${state.mathScene.objects.size}",
+                "Planes ${if (state.planesVisible) "on" else "off"}",
+                "Labels ${onOff(state.labelsVisible)}"
+            )
+        ) { label -> AssistChip(onClick = {}, label = { Text(label) }) }
+    }
+}
+
+@Composable
+private fun MathArPhaseToolsPanel(
+    state: ArViewerUiState,
+    onFeaturePhase: (ArFeaturePhase) -> Unit,
+    onToggleMathArFeature: (MathArFeature) -> Unit,
+    onLiveEquation: (String) -> Unit,
+    onAddPointLabel: () -> Unit,
+    onAddRulerAnchor: () -> Unit,
+    onCompareOffset: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ArFeaturePhase.entries) { phase ->
+                FilterChip(
+                    selected = state.selectedFeaturePhase == phase,
+                    onClick = { onFeaturePhase(phase) },
+                    label = { Text(phase.label()) }
+                )
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.selectedFeaturePhase.features()) { feature ->
+                FilterChip(
+                    selected = feature in state.enabledMathArFeatures,
+                    onClick = { onToggleMathArFeature(feature) },
+                    label = { Text(feature.shortLabel()) }
+                )
+            }
+        }
+        when (state.selectedFeaturePhase) {
+            ArFeaturePhase.DirectInteraction -> {
+                OutlinedTextField(
+                    value = state.liveEquation,
+                    onValueChange = onLiveEquation,
+                    label = { Text("Live AR equation") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onAddPointLabel, modifier = Modifier.weight(1f)) { Text("Pick point") }
+                    OutlinedButton(onClick = onAddRulerAnchor, modifier = Modifier.weight(1f)) { Text("Ruler anchor") }
+                }
+            }
+            ArFeaturePhase.GraphAnalysis -> {
+                Text("Graph analysis overlays: roots, tangent/normal, area, volume layers and constraints.", style = MaterialTheme.typography.bodySmall)
+            }
+            ArFeaturePhase.EngineStrengthening -> {
+                Text("Engine overlays: grid lock, occlusion polish, saved scene anchors, confidence HUD and compare mode.", style = MaterialTheme.typography.bodySmall)
+                if (state.compareModeEnabled) {
+                    Text("Compare offset ${"%.2f".format(state.compareOffsetMeters)}m", style = MaterialTheme.typography.labelMedium)
+                    Slider(value = state.compareOffsetMeters, onValueChange = onCompareOffset, valueRange = 0.18f..0.8f)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Drawing2dTo3dPanel(
+    state: ArViewerUiState,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onFunction3dTransform: (Function3dTransformMode) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onAnimationMode: (GraphAnimationMode) -> Unit,
+    onSlicePosition: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf("Draw graph", "Select function", "Transform", "Slice", "Color map")) { label ->
+                AssistChip(onClick = {}, label = { Text(label) })
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(Function3dTransformMode.entries) { mode ->
+                FilterChip(
+                    selected = state.function3dTransformMode == mode,
+                    onClick = { onFunction3dTransform(mode) },
+                    label = { Text(mode.label()) }
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { onGraphColorMap(state.graphColorMap.next()) }, modifier = Modifier.weight(1f)) {
+                Text(state.graphColorMap.label())
+            }
+            OutlinedButton(onClick = { onSlicePosition(state.graphSlicePosition) }, modifier = Modifier.weight(1f)) {
+                Text("Slice ${(state.graphSlicePosition * 100f).toInt()}%")
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(GraphColorMap.entries) { colorMap ->
+                FilterChip(
+                    selected = state.graphColorMap == colorMap,
+                    onClick = { onGraphColorMap(colorMap) },
+                    label = { ColorMapChip(colorMap) }
+                )
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(GraphAnimationMode.entries) { mode ->
+                FilterChip(
+                    selected = state.graphAnimationMode == mode,
+                    onClick = { onAnimationMode(mode) },
+                    label = { Text(mode.label()) }
+                )
+            }
+        }
+        Text("${state.graphAnimationMode.label()} ${(state.graphAnimationProgress * 100f).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(value = state.graphAnimationProgress, onValueChange = onAnimationProgress)
+    }
+}
+
+@Composable
+private fun SolarSystemArPanel(
+    state: ArViewerUiState,
+    onAnimationProgress: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf("Orrery", "Planet scale", "Orbit paths", "Distance", "Rotation")) { label ->
+                AssistChip(onClick = {}, label = { Text(label) })
+            }
+        }
+        Text("Orbit timeline ${(state.graphAnimationProgress * 100f).toInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(value = state.graphAnimationProgress, onValueChange = onAnimationProgress)
+    }
+}
+
+@Composable
+private fun FloatingMathToolbar(
+    state: ArViewerUiState,
+    onTool: (FloatingMathTool) -> Unit
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(FloatingMathTool.entries) { tool ->
+            FilterChip(
+                selected = state.activeFloatingTool == tool && tool.isEnabled(state),
+                onClick = { onTool(tool) },
+                label = { Text(tool.shortLabel()) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun PaperGraphModePanel(
+    state: ArViewerUiState,
+    onCalibrationStep: () -> Unit,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onAnimationMode: (GraphAnimationMode) -> Unit,
+    onSlicePosition: (Float) -> Unit,
+    onPaperGraphLayer: (PaperGraphLayer) -> Unit
+) {
+    val paper = state.paperGraph
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(
+                listOf(
+                    if (paper?.hasLockedTarget == true) "Worksheet locked" else "Find worksheet",
+                    "Target images ${paper?.configuredReferenceCount ?: 1}",
+                    "Tap ${state.paperGraphCalibration.step.stepLabel()}",
+                    if (state.paperGraphCalibration.isComplete) "Coordinate system ready" else "Calibration pending"
+                )
+            ) { label -> AssistChip(onClick = {}, label = { Text(label) }) }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(PaperGraphLayer.entries) { layer ->
+                FilterChip(
+                    selected = layer in state.paperGraphLayers,
+                    onClick = { onPaperGraphLayer(layer) },
+                    label = { Text(layer.label()) }
+                )
+            }
+        }
+        PaperGraphCalibrationStrip(state)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = onCalibrationStep, modifier = Modifier.weight(1f)) {
+                Text(if (state.paperGraphCalibration.isComplete) "Reset Calibration" else "Lock ${state.paperGraphCalibration.step.stepLabel()}")
+            }
+            OutlinedButton(onClick = { onGraphColorMap(state.graphColorMap.next()) }, modifier = Modifier.weight(1f)) {
+                Text(state.graphColorMap.label())
+            }
+        }
+        if (state.slicePlaneVisible) {
+            Text("Slice plane ${"%.0f".format(state.graphSlicePosition * 100f)}%", style = MaterialTheme.typography.labelMedium)
+            Slider(value = state.graphSlicePosition, onValueChange = onSlicePosition)
+        }
+        if (state.graphAnimationEnabled) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(GraphAnimationMode.entries) { mode ->
+                    FilterChip(
+                        selected = state.graphAnimationMode == mode,
+                        onClick = { onAnimationMode(mode) },
+                        label = { Text(mode.label()) }
+                    )
+                }
+            }
+            Text("${state.graphAnimationMode.label()} ${"%.0f".format(state.graphAnimationProgress * 100f)}%", style = MaterialTheme.typography.labelMedium)
+            Slider(value = state.graphAnimationProgress, onValueChange = onAnimationProgress)
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(GraphColorMap.entries) { colorMap ->
+                FilterChip(
+                    selected = state.graphColorMap == colorMap,
+                    onClick = { onGraphColorMap(colorMap) },
+                    label = { ColorMapChip(colorMap) }
+                )
+            }
+        }
+        paper?.trackedTargets?.firstOrNull()?.let { target ->
+            Text(
+                "${target.name}: ${"%.2f".format(target.extentX)}m x ${"%.2f".format(target.extentZ)}m, ${target.trackingMethod}",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun PaperGraphCalibrationStrip(state: ArViewerUiState) {
+    val calibration = state.paperGraphCalibration
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(
+            listOf(
+                "Origin" to calibration.originLocked,
+                "X-axis point" to calibration.xAxisLocked,
+                "Y-axis point" to calibration.yAxisLocked
+            )
+        ) { (label, locked) ->
+            AssistChip(
+                onClick = {},
+                label = { Text("${if (locked) "Locked" else "Tap"} $label") }
+            )
+        }
+    }
+    val origin = calibration.origin
+    val xAxis = calibration.xAxisPoint
+    val yAxis = calibration.yAxisPoint
+    if (origin != null && xAxis != null && yAxis != null) {
+        val xScale = distance(origin, xAxis)
+        val yScale = distance(origin, yAxis)
+        Text(
+            "Scale: X unit ${"%.2f".format(xScale)}m, Y unit ${"%.2f".format(yScale)}m",
+            style = MaterialTheme.typography.bodySmall
+        )
+    } else {
+        Text(
+            if (state.paperGraph?.hasLockedTarget == true) "Tap the drawn origin, then one point on X, then one point on Y." else "Point at the AI STEM Paper Graph target to begin.",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun DirectUserEnhancementPanel(
+    state: ArViewerUiState,
+    onLayers: () -> Unit,
+    onCapture: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(
+                listOf(
+                    "Axes ${onOff(state.axesVisible)}",
+                    "Grid ${onOff(state.gridVisible)}",
+                    "Labels ${onOff(state.labelsVisible)}",
+                    "Formula ${if (state.formulaCardsCollapsed) "chip" else "card"}",
+                    "Measure ${onOff(state.measurementsVisible)}",
+                    "Slice ${onOff(state.slicePlaneVisible)}",
+                    "Color ${state.graphColorMap.label()}"
+                )
+            ) { label -> AssistChip(onClick = {}, label = { Text(label) }) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onLayers, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.Layers, null)
+                Text("Scene")
+            }
+            OutlinedButton(onClick = onCapture, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.Save, null)
+                Text("Capture")
+            }
+        }
+        state.mathScene.primarySelectedObject?.let { selected ->
+            TapToExplainStrip(selected)
+        }
+    }
+}
+
+@Composable
+private fun TapToExplainStrip(selected: MathSceneObject) {
+    val labels = when (selected.objectType) {
+        MathObjectType.Cube, MathObjectType.RectangularPrism -> listOf("vertex", "edge", "face", "volume")
+        MathObjectType.Sphere -> listOf("radius", "diameter", "surface", "volume")
+        MathObjectType.Cylinder, MathObjectType.Cone -> listOf("radius", "height", "base", "volume")
+        MathObjectType.SineCurve -> listOf("amplitude", "period", "midline", "slope")
+        MathObjectType.CoordinatePlane -> listOf("origin", "x-axis", "y-axis", "quadrant")
+        MathObjectType.VectorArrow -> listOf("magnitude", "direction", "component", "displacement")
+        MathObjectType.NumberLine -> listOf("origin", "unit", "distance", "interval")
+        MathObjectType.Triangle, MathObjectType.Circle -> listOf("point", "angle", "area", "perimeter")
+    }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(labels) { label -> ElevatedAssistChip(onClick = {}, label = { Text(label) }) }
+    }
+}
+
+private fun FloatingMathTool.shortLabel(): String = when (this) {
+    FloatingMathTool.Axes -> "Axes"
+    FloatingMathTool.Grid -> "Grid"
+    FloatingMathTool.Labels -> "Labels"
+    FloatingMathTool.Formula -> "Formula"
+    FloatingMathTool.Measure -> "Measure"
+    FloatingMathTool.Slice -> "Slice"
+    FloatingMathTool.Animate -> "Animate"
+    FloatingMathTool.Capture -> "Capture"
+}
+
+private fun FloatingMathTool.isEnabled(state: ArViewerUiState): Boolean = when (this) {
+    FloatingMathTool.Axes -> state.axesVisible
+    FloatingMathTool.Grid -> state.gridVisible
+    FloatingMathTool.Labels -> state.labelsVisible
+    FloatingMathTool.Formula -> state.formulaCardsVisible
+    FloatingMathTool.Measure -> state.measurementsVisible
+    FloatingMathTool.Slice -> state.slicePlaneVisible
+    FloatingMathTool.Animate -> state.graphAnimationEnabled
+    FloatingMathTool.Capture -> state.captureRequested
+}
+
+private fun ArFeaturePhase.label(): String = when (this) {
+    ArFeaturePhase.DirectInteraction -> "Phase 1: Interact"
+    ArFeaturePhase.GraphAnalysis -> "Phase 2: Analyze"
+    ArFeaturePhase.EngineStrengthening -> "Phase 3: Engine"
+}
+
+private fun ArFeaturePhase.features(): List<MathArFeature> = when (this) {
+    ArFeaturePhase.DirectInteraction -> listOf(
+        MathArFeature.ObjectSnapping,
+        MathArFeature.GestureHandles,
+        MathArFeature.LiveEquationEditing,
+        MathArFeature.PointPicker,
+        MathArFeature.MeasurementRulerAnchors
+    )
+    ArFeaturePhase.GraphAnalysis -> listOf(
+        MathArFeature.RootVisualizer,
+        MathArFeature.TangentNormalTool,
+        MathArFeature.AreaUnderCurve,
+        MathArFeature.VolumeBuilder,
+        MathArFeature.MultiObjectConstraints
+    )
+    ArFeaturePhase.EngineStrengthening -> listOf(
+        MathArFeature.CoordinateGridLocking,
+        MathArFeature.DepthOcclusion,
+        MathArFeature.ScenePersistence,
+        MathArFeature.PrecisionConfidenceHud,
+        MathArFeature.CompareMode
+    )
+}
+
+private fun MathArFeature.shortLabel(): String = when (this) {
+    MathArFeature.ObjectSnapping -> "Snap"
+    MathArFeature.GestureHandles -> "Handles"
+    MathArFeature.LiveEquationEditing -> "Equation"
+    MathArFeature.PointPicker -> "Point"
+    MathArFeature.RootVisualizer -> "Roots"
+    MathArFeature.TangentNormalTool -> "Tangent"
+    MathArFeature.AreaUnderCurve -> "Area"
+    MathArFeature.VolumeBuilder -> "Volume"
+    MathArFeature.MeasurementRulerAnchors -> "Ruler"
+    MathArFeature.CoordinateGridLocking -> "Grid Lock"
+    MathArFeature.MultiObjectConstraints -> "Constraints"
+    MathArFeature.DepthOcclusion -> "Occlusion"
+    MathArFeature.ScenePersistence -> "Persist"
+    MathArFeature.PrecisionConfidenceHud -> "Confidence"
+    MathArFeature.CompareMode -> "Compare"
+}
+
+private fun PaperGraphCalibrationStep.stepLabel(): String = when (this) {
+    PaperGraphCalibrationStep.Origin -> "Origin"
+    PaperGraphCalibrationStep.XAxisPoint -> "X Axis"
+    PaperGraphCalibrationStep.YAxisPoint -> "Y Axis"
+    PaperGraphCalibrationStep.Complete -> "Ready"
+}
+
+private fun GraphColorMap.label(): String = when (this) {
+    GraphColorMap.Height -> "Height"
+    GraphColorMap.Slope -> "Slope"
+    GraphColorMap.Curvature -> "Curvature"
+    GraphColorMap.XValue -> "X value"
+    GraphColorMap.YValue -> "Y value"
+}
+
+@Composable
+private fun ColorMapChip(colorMap: GraphColorMap) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            colorMap.palette().forEach { color ->
+                Box(
+                    Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(color)
+                )
+            }
+        }
+        Text(colorMap.label())
+    }
+}
+
+private fun GraphAnimationMode.label(): String = when (this) {
+    GraphAnimationMode.RotateGraph -> "Rotate graph"
+    GraphAnimationMode.SweepArea -> "Sweep area"
+    GraphAnimationMode.BuildVolume -> "Build volume"
+    GraphAnimationMode.MoveTangentPoint -> "Tangent point"
+    GraphAnimationMode.AnimateSineWave -> "Sine wave"
+}
+
+private fun Function3dTransformMode.label(): String = when (this) {
+    Function3dTransformMode.Surface -> "Surface"
+    Function3dTransformMode.Extrusion -> "Extrusion"
+    Function3dTransformMode.SolidOfRevolution -> "Revolution"
+    Function3dTransformMode.TangentPlane -> "Tangent plane"
+    Function3dTransformMode.CrossSectionSlices -> "Cross-sections"
+}
+
+private fun PaperGraphLayer.label(): String = when (this) {
+    PaperGraphLayer.Axes -> "Axes"
+    PaperGraphLayer.Scale -> "Scale"
+    PaperGraphLayer.Graph -> "Graph"
+    PaperGraphLayer.Surface3d -> "3D Surface"
+    PaperGraphLayer.CrossSection -> "Cross Section"
+}
+
+private fun distance(a: PaperGraphCalibrationPoint, b: PaperGraphCalibrationPoint): Float =
+    sqrt((a.worldX - b.worldX) * (a.worldX - b.worldX) + (a.worldY - b.worldY) * (a.worldY - b.worldY) + (a.worldZ - b.worldZ) * (a.worldZ - b.worldZ))
+
+private fun GraphColorMap.next(): GraphColorMap {
+    val values = GraphColorMap.entries
+    return values[(values.indexOf(this) + 1) % values.size]
+}
+
+private fun onOff(enabled: Boolean): String = if (enabled) "on" else "off"
 
 @Composable
 private fun OutdoorGeospatialMathPanel(state: ArViewerUiState) {
@@ -1597,44 +2944,519 @@ private fun Reticle(state: ArViewerUiState) {
 
 @Composable
 private fun TrackingHealthOverlay(state: ArViewerUiState) {
-    val needsGuidance = state.trackingStatus != TrackingStatus.Tracking ||
-        (state.mathScene.objects.isNotEmpty() && state.anchorTrackingStatus != TrackingStatus.Tracking)
-    if (!needsGuidance) return
-    val containerColor = when (state.guidanceSeverity) {
-        ArGuidanceSeverity.Info -> MaterialTheme.colorScheme.secondaryContainer
-        ArGuidanceSeverity.Warning -> MaterialTheme.colorScheme.tertiaryContainer
-        ArGuidanceSeverity.ActionRequired -> MaterialTheme.colorScheme.errorContainer
-    }
-    val contentColor = when (state.guidanceSeverity) {
-        ArGuidanceSeverity.Info -> MaterialTheme.colorScheme.onSecondaryContainer
-        ArGuidanceSeverity.Warning -> MaterialTheme.colorScheme.onTertiaryContainer
-        ArGuidanceSeverity.ActionRequired -> MaterialTheme.colorScheme.onErrorContainer
-    }
+    val items = state.smartScanItems()
     Box(
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .padding(top = 56.dp, start = 16.dp, end = 16.dp),
-        contentAlignment = Alignment.TopCenter
+            .padding(top = 56.dp, start = 12.dp, end = 12.dp),
+        contentAlignment = Alignment.TopStart
     ) {
         Surface(
-            color = containerColor.copy(alpha = 0.92f),
-            shape = MaterialTheme.shapes.medium
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+            shape = MaterialTheme.shapes.small
         ) {
-            Text(
-                "${state.guidanceHeadline}: ${state.guidanceInstruction}",
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                color = contentColor,
-                style = MaterialTheme.typography.bodyMedium
-            )
+            LazyRow(
+                Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(items) { item ->
+                    SmartScanPill(item)
+                }
+            }
         }
     }
+}
+
+private data class SmartScanItem(
+    val label: String,
+    val color: Color,
+    val active: Boolean
+)
+
+@Composable
+private fun SmartScanPill(item: SmartScanItem) {
+    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(if (item.active) 9.dp else 7.dp)
+                .clip(CircleShape)
+                .background(item.color.copy(alpha = if (item.active) 1f else 0.35f))
+        )
+        Text(
+            item.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (item.active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+        )
+    }
+}
+
+private fun ArViewerUiState.smartScanItems(): List<SmartScanItem> {
+    val surfaceFound = placementHitKind in setOf(PlacementHitKind.Plane, PlacementHitKind.DepthPoint)
+    val imageLocked = paperGraph?.hasLockedTarget == true
+    val buildingMeshFound = (outdoorGeospatial?.totalMeshCount ?: 0) > 0 || placementHitKind == PlacementHitKind.StreetscapeGeometry
+    val moveSlower = !motionStable || trackingStatus == TrackingStatus.Limited || recoveryMode == ArRecoveryMode.TrackingLimited
+    val needMoreLight = !lightStable || guidanceInstruction.contains("light", ignoreCase = true) || trackingMessage.contains("light", ignoreCase = true)
+    return when (arEngineMode) {
+        ArEngineMode.PaperGraph -> listOf(
+            SmartScanItem("Image locked", if (imageLocked) Color(0xFF3DFF9F) else Color(0xFFFFC857), imageLocked),
+            SmartScanItem("Move slower", Color(0xFFFFA726), moveSlower),
+            SmartScanItem("Need more light", Color(0xFFFF6B6B), needMoreLight)
+        )
+        ArEngineMode.OutdoorGeospatialMath -> listOf(
+            SmartScanItem("Building mesh found", if (buildingMeshFound) Color(0xFF3DFF9F) else Color(0xFFFFC857), buildingMeshFound),
+            SmartScanItem("Move slower", Color(0xFFFFA726), moveSlower),
+            SmartScanItem("Need more light", Color(0xFFFF6B6B), needMoreLight)
+        )
+        ArEngineMode.SurfacePlacement -> listOf(
+            SmartScanItem("Surface found", if (surfaceFound) Color(0xFF3DFF9F) else Color(0xFFFFC857), surfaceFound),
+            SmartScanItem("Move slower", Color(0xFFFFA726), moveSlower),
+            SmartScanItem("Need more light", Color(0xFFFF6B6B), needMoreLight)
+        )
+        ArEngineMode.AirPlacement -> listOf(
+            SmartScanItem("Air point found", if (hasValidPlacementHit) Color(0xFF3DFF9F) else Color(0xFFFFC857), hasValidPlacementHit),
+            SmartScanItem("Move slower", Color(0xFFFFA726), moveSlower),
+            SmartScanItem("Need more light", Color(0xFFFF6B6B), needMoreLight)
+        )
+        ArEngineMode.Indoor -> listOf(
+            SmartScanItem("Surface found", if (surfaceFound) Color(0xFF3DFF9F) else Color(0xFFFFC857), surfaceFound),
+            SmartScanItem("Move slower", Color(0xFFFFA726), moveSlower),
+            SmartScanItem("Need more light", Color(0xFFFF6B6B), needMoreLight)
+        )
+    }
+}
+
+@Composable
+private fun MathInteractionOverlay(state: ArViewerUiState) {
+    Box(Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.CenterEnd) {
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (state.labelsVisible) {
+                state.mathScene.primarySelectedObject?.let { selected ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(selected.displayName, style = MaterialTheme.typography.labelLarge)
+                            Text(selected.objectType.displayName, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (state.measurementsVisible) {
+                        MeasurementOverlayCards(selected = selected, state = state)
+                    }
+                    if (state.formulaCardsVisible) {
+                        FormulaOverlayCards(
+                            selected = selected,
+                            state = state
+                        )
+                    }
+                }
+            }
+            if (state.slicePlaneVisible) {
+                AssistChip(onClick = {}, label = { Text("Slice ${(state.graphSlicePosition * 100f).toInt()}%") })
+            }
+            if (state.graphAnimationEnabled) {
+                AssistChip(onClick = {}, label = { Text("${state.graphAnimationMode.label()} ${(state.graphAnimationProgress * 100f).toInt()}%") })
+            }
+            if (state.captureRequested) {
+                ElevatedAssistChip(onClick = {}, label = { Text("Capture ready") })
+            }
+            MathArFeatureOverlay(state)
+        }
+    }
+    if (state.arEngineMode == ArEngineMode.PaperGraph) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(top = 104.dp, start = 16.dp, end = 16.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.86f),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Text(
+                    if (state.paperGraph?.hasLockedTarget == true) "Paper graph locked" else "Scan graph paper",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MathArFeatureOverlay(state: ArViewerUiState) {
+    val chips = buildList {
+        if (state.snappingEnabled) add("Snap: ${state.snapTargetLabel()}")
+        if (state.coordinateGridLocked) add("Grid locked")
+        if (state.compareModeEnabled) add("Compare: original vs transformed")
+        if (state.depthOcclusionPolishEnabled) add("Depth occlusion on")
+        if (MathArFeature.MultiObjectConstraints in state.enabledMathArFeatures) add("Constraints ready")
+        if (MathArFeature.ScenePersistence in state.enabledMathArFeatures) add("Scene anchors saved")
+        if (MathArFeature.RootVisualizer in state.enabledMathArFeatures) add("Roots marked")
+        if (MathArFeature.TangentNormalTool in state.enabledMathArFeatures) add("Tangent + normal")
+        if (MathArFeature.AreaUnderCurve in state.enabledMathArFeatures) add("Area shaded")
+        if (MathArFeature.VolumeBuilder in state.enabledMathArFeatures) add("Volume layers")
+    }
+    if (MathArFeature.LiveEquationEditing in state.enabledMathArFeatures) {
+        Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f), shape = MaterialTheme.shapes.small) {
+            Text(state.liveEquation, Modifier.padding(horizontal = 10.dp, vertical = 7.dp), style = MaterialTheme.typography.labelLarge)
+        }
+    }
+    if (state.pickedPoints.isNotEmpty()) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(state.pickedPoints) { point ->
+                AssistChip(onClick = {}, label = { Text(point.label) })
+            }
+        }
+    }
+    if (state.rulerAnchors.isNotEmpty()) {
+        AssistChip(onClick = {}, label = { Text(state.rulerMeasurementLabel()) })
+    }
+    state.lastPlacementPoint?.takeIf { state.snappingEnabled || state.coordinateGridLocked }?.let { point ->
+        AssistChip(onClick = {}, label = { Text("Anchor ${state.snapTargetLabel()} (${ "%.2f".format(point.x) }, ${ "%.2f".format(point.z) })") })
+    }
+    if (MathArFeature.PrecisionConfidenceHud in state.enabledMathArFeatures) {
+        ConfidenceHudStrip(state)
+    }
+    if (chips.isNotEmpty()) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(chips) { chip -> ElevatedAssistChip(onClick = {}, label = { Text(chip) }) }
+        }
+    }
+}
+
+@Composable
+private fun ConfidenceHudStrip(state: ArViewerUiState) {
+    val values = listOf(
+        "Tracking ${state.placementScore}%",
+        "Scale ${state.scaleConfidence()}",
+        "Image ${if (state.paperGraph?.hasLockedTarget == true) "locked" else "scan"}",
+        "Mesh ${state.outdoorGeospatial?.totalMeshCount ?: 0}",
+        "Calibration ${if (state.paperGraphCalibration.isComplete) "ready" else "pending"}",
+        "Snap ${if (state.snappingEnabled || state.coordinateGridLocked) "on" else "off"}",
+        "Depth ${if (state.depthOcclusionPolishEnabled && state.placementHitKind == PlacementHitKind.DepthPoint) "active" else if (state.depthOcclusionPolishEnabled) "ready" else "off"}",
+        "Persist ${state.savedScenes.size}"
+    )
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items(values) { value ->
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.88f), shape = MaterialTheme.shapes.small) {
+                Text(value, Modifier.padding(horizontal = 8.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+private fun ArViewerUiState.snapTargetLabel(): String = when {
+    arEngineMode == ArEngineMode.PaperGraph && paperGraphCalibration.isComplete -> "paper axes"
+    arEngineMode == ArEngineMode.OutdoorGeospatialMath -> "building edge"
+    placementHitKind == PlacementHitKind.Plane -> "surface plane"
+    else -> "AR grid"
+}
+
+private fun ArViewerUiState.scaleConfidence(): String = when {
+    paperGraphCalibration.isComplete -> "paper"
+    placementQuality in setOf(PlacementQuality.Excellent, PlacementQuality.Good) -> "good"
+    else -> "rough"
+}
+
+private fun ArViewerUiState.rulerMeasurementLabel(): String {
+    if (rulerAnchors.size < 2) return "Ruler: add point ${rulerAnchors.size + 1}"
+    val a = rulerAnchors[0]
+    val b = rulerAnchors[1]
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    val dz = b.z - a.z
+    val distance = sqrt(dx * dx + dy * dy + dz * dz)
+    val slope = if (dx == 0f) 0f else dy / dx
+    return "Ruler ${"%.2f".format(distance)}m | slope ${"%.2f".format(slope)}"
 }
 
 private fun ArGuidanceSeverity.label(): String = when (this) {
     ArGuidanceSeverity.Info -> "Info"
     ArGuidanceSeverity.Warning -> "Warning"
     ArGuidanceSeverity.ActionRequired -> "Action"
+}
+
+@Composable
+private fun MeasurementOverlayCards(
+    selected: MathSceneObject,
+    state: ArViewerUiState
+) {
+    val measurements = selected.measurementOverlays(state)
+    if (measurements.isEmpty()) return
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items(measurements) { measurement ->
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.9f),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(measurement.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                    Text(measurement.formattedValue, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
+            }
+        }
+    }
+}
+
+private data class MeasurementOverlay(
+    val id: String,
+    val label: String,
+    val formattedValue: String
+)
+
+private fun MathSceneObject.measurementOverlays(state: ArViewerUiState): List<MeasurementOverlay> {
+    val outdoor = state.outdoorGeospatial?.selectedMetrics
+    if (state.mathArExperience == MathArExperience.OutdoorGeometry && outdoor != null) {
+        return listOf(
+            MeasurementOverlay("height", "Height", formatMeters(outdoor.estimatedHeightMeters)),
+            MeasurementOverlay("distance", "Distance", formatMeters(outdoor.rooflineDistanceMeters)),
+            MeasurementOverlay("angle", "Angle", "${MeasurementFormatter.number(outdoor.angleOfElevationDegrees.toDouble())} deg"),
+            MeasurementOverlay("slope", "Slope", MeasurementFormatter.number(outdoor.slopeToRoofline.toDouble())),
+            MeasurementOverlay("area", "Area", formatSquareMeters(outdoor.footprintAreaSquareMeters)),
+            MeasurementOverlay("volume", "Volume", formatCubicMeters(outdoor.volumeApproxCubicMeters))
+        )
+    }
+
+    val definitionMeasurements = DefaultMathObjectRegistry.getDefinition(definitionId)
+        ?.measurementProvider
+        ?.invoke(parameters)
+        .orEmpty()
+        .map { property ->
+            MeasurementOverlay(
+                id = property.id,
+                label = property.label.measurementLabel(),
+                formattedValue = "${MeasurementFormatter.number(property.value)} ${property.unitLabel.orEmpty()}".trim()
+            )
+        }
+
+    val direct = when (objectType) {
+        MathObjectType.Cube -> {
+            val s = parameterNumber(parameters, "sideLength", 0.24)
+            listOf(
+                MeasurementOverlay("height", "Height", MeasurementFormatter.length(s)),
+                MeasurementOverlay("distance", "Distance", MeasurementFormatter.length(s * sqrt(3.0))),
+                MeasurementOverlay("angle", "Angle", "90 deg"),
+                MeasurementOverlay("slope", "Slope", "0"),
+                MeasurementOverlay("area", "Area", "${MeasurementFormatter.number(6 * s * s)} m2"),
+                MeasurementOverlay("volume", "Volume", "${MeasurementFormatter.number(s * s * s)} m3")
+            )
+        }
+        MathObjectType.RectangularPrism -> {
+            val l = parameterNumber(parameters, "length", 0.32)
+            val w = parameterNumber(parameters, "width", 0.18)
+            val h = parameterNumber(parameters, "height", 0.22)
+            listOf(
+                MeasurementOverlay("height", "Height", MeasurementFormatter.length(h)),
+                MeasurementOverlay("distance", "Distance", MeasurementFormatter.length(sqrt(l * l + w * w + h * h))),
+                MeasurementOverlay("angle", "Angle", "90 deg"),
+                MeasurementOverlay("slope", "Slope", MeasurementFormatter.number(h / l.coerceAtLeast(0.001))),
+                MeasurementOverlay("area", "Area", "${MeasurementFormatter.number(2 * (l * w + l * h + w * h))} m2"),
+                MeasurementOverlay("volume", "Volume", "${MeasurementFormatter.number(l * w * h)} m3")
+            )
+        }
+        MathObjectType.Cylinder -> {
+            val r = parameterNumber(parameters, "radius", 0.12)
+            val h = parameterNumber(parameters, "height", 0.32)
+            listOf(
+                MeasurementOverlay("height", "Height", MeasurementFormatter.length(h)),
+                MeasurementOverlay("distance", "Diameter", MeasurementFormatter.length(2 * r)),
+                MeasurementOverlay("angle", "Angle", "90 deg"),
+                MeasurementOverlay("slope", "Slope", "0"),
+                MeasurementOverlay("area", "Area", "${MeasurementFormatter.number(PI * r * r)} m2"),
+                MeasurementOverlay("volume", "Volume", "${MeasurementFormatter.number(PI * r * r * h)} m3")
+            )
+        }
+        MathObjectType.Cone -> {
+            val r = parameterNumber(parameters, "radius", 0.12)
+            val h = parameterNumber(parameters, "height", 0.32)
+            val slant = sqrt(r * r + h * h)
+            listOf(
+                MeasurementOverlay("height", "Height", MeasurementFormatter.length(h)),
+                MeasurementOverlay("distance", "Slant", MeasurementFormatter.length(slant)),
+                MeasurementOverlay("angle", "Angle", "${MeasurementFormatter.number(Math.toDegrees(atan2(h, r)))} deg"),
+                MeasurementOverlay("slope", "Slope", MeasurementFormatter.number(h / r.coerceAtLeast(0.001))),
+                MeasurementOverlay("area", "Area", "${MeasurementFormatter.number(PI * r * (r + slant))} m2"),
+                MeasurementOverlay("volume", "Volume", "${MeasurementFormatter.number(PI * r * r * h / 3.0)} m3")
+            )
+        }
+        MathObjectType.Sphere -> {
+            val r = parameterNumber(parameters, "radius", 0.16)
+            listOf(
+                MeasurementOverlay("height", "Height", MeasurementFormatter.length(2 * r)),
+                MeasurementOverlay("distance", "Diameter", MeasurementFormatter.length(2 * r)),
+                MeasurementOverlay("angle", "Angle", "360 deg"),
+                MeasurementOverlay("slope", "Slope", "varies"),
+                MeasurementOverlay("area", "Area", "${MeasurementFormatter.number(4 * PI * r * r)} m2"),
+                MeasurementOverlay("volume", "Volume", "${MeasurementFormatter.number(4 * PI * r * r * r / 3.0)} m3")
+            )
+        }
+        MathObjectType.SineCurve -> {
+            val a = parameterNumber(parameters, "amplitude", 1.0)
+            val b = parameterNumber(parameters, "frequency", 1.0)
+            val slope = a * b
+            listOf(
+                MeasurementOverlay("height", "Height", MeasurementFormatter.number(kotlin.math.abs(2 * a))),
+                MeasurementOverlay("distance", "Period", MeasurementFormatter.number((2 * PI) / b.coerceAtLeast(0.001))),
+                MeasurementOverlay("angle", "Angle", "${MeasurementFormatter.number(Math.toDegrees(atan2(slope, 1.0)))} deg"),
+                MeasurementOverlay("slope", "Slope", MeasurementFormatter.number(slope)),
+                MeasurementOverlay("area", "Area", "scan"),
+                MeasurementOverlay("volume", "Volume", "extrude")
+            )
+        }
+        MathObjectType.VectorArrow -> {
+            val x = parameterNumber(parameters, "x", 1.0)
+            val y = parameterNumber(parameters, "y", 1.0)
+            val z = parameterNumber(parameters, "z", 0.0)
+            val magnitude = sqrt(x * x + y * y + z * z)
+            listOf(
+                MeasurementOverlay("height", "Rise", MeasurementFormatter.number(y)),
+                MeasurementOverlay("distance", "Distance", MeasurementFormatter.number(magnitude)),
+                MeasurementOverlay("angle", "Angle", "${MeasurementFormatter.number(Math.toDegrees(atan2(y, x)))} deg"),
+                MeasurementOverlay("slope", "Slope", MeasurementFormatter.number(y / x.coerceAtLeast(0.001))),
+                MeasurementOverlay("area", "Area", "n/a"),
+                MeasurementOverlay("volume", "Volume", "n/a")
+            )
+        }
+        MathObjectType.CoordinatePlane,
+        MathObjectType.NumberLine,
+        MathObjectType.Triangle,
+        MathObjectType.Circle -> emptyList()
+    }
+    return (direct + definitionMeasurements).distinctBy { it.id }.take(6)
+}
+
+private fun String.measurementLabel(): String = when {
+    contains("volume", ignoreCase = true) -> "Volume"
+    contains("area", ignoreCase = true) -> "Area"
+    contains("height", ignoreCase = true) -> "Height"
+    contains("distance", ignoreCase = true) -> "Distance"
+    contains("slope", ignoreCase = true) -> "Slope"
+    contains("angle", ignoreCase = true) -> "Angle"
+    else -> this
+}
+
+@Composable
+private fun FormulaOverlayCards(
+    selected: MathSceneObject,
+    state: ArViewerUiState
+) {
+    val formulas = selected.formulaCards(state)
+    if (formulas.isEmpty()) return
+    if (state.formulaCardsCollapsed) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(formulas) { formula ->
+                AssistChip(onClick = {}, label = { Text(formula.compact) })
+            }
+        }
+    } else {
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            formulas.take(3).forEach { formula ->
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f),
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Text(formula.title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Text(formula.expression, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        formula.note?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class FormulaOverlay(
+    val title: String,
+    val expression: String,
+    val compact: String,
+    val note: String? = null
+)
+
+private fun MathSceneObject.formulaCards(state: ArViewerUiState): List<FormulaOverlay> {
+    val base = when (objectType) {
+        MathObjectType.Cube -> listOf(
+            FormulaOverlay("Volume", "V = s x s x s", "V=s3"),
+            FormulaOverlay("Surface area", "A = 6s2", "A=6s2")
+        )
+        MathObjectType.RectangularPrism -> listOf(
+            FormulaOverlay("Volume", "V = l x w x h", "V=lwh"),
+            FormulaOverlay("Surface area", "A = 2(lw + lh + wh)", "A=2(lw+lh+wh)")
+        )
+        MathObjectType.Cylinder -> listOf(
+            FormulaOverlay("Volume", "V = pi r2 h", "V=pi r2h"),
+            FormulaOverlay("Surface area", "A = 2pi r(r + h)", "A=2pi r(r+h)")
+        )
+        MathObjectType.Cone -> listOf(
+            FormulaOverlay("Volume", "V = (1/3)pi r2 h", "V=1/3pi r2h"),
+            FormulaOverlay("Slope side", "l = sqrt(r2 + h2)", "l=sqrt(r2+h2)")
+        )
+        MathObjectType.Sphere -> listOf(
+            FormulaOverlay("Volume", "V = (4/3)pi r3", "V=4/3pi r3"),
+            FormulaOverlay("Surface area", "A = 4pi r2", "A=4pi r2")
+        )
+        MathObjectType.SineCurve -> listOf(
+            FormulaOverlay("Function", "y = a sin(bx + c) + d", "y=a sin(bx+c)+d"),
+            FormulaOverlay("Slope", "dy/dx = ab cos(bx + c)", "dy/dx")
+        )
+        MathObjectType.CoordinatePlane -> listOf(
+            FormulaOverlay("Coordinate rule", "(x, y, z)", "(x,y,z)"),
+            FormulaOverlay("Slope", "slope = rise / run", "rise/run")
+        )
+        MathObjectType.VectorArrow -> listOf(
+            FormulaOverlay("Magnitude", "|v| = sqrt(x2 + y2 + z2)", "|v|"),
+            FormulaOverlay("Displacement", "d = end - start", "d=end-start")
+        )
+        MathObjectType.NumberLine -> listOf(
+            FormulaOverlay("Distance", "d = |x2 - x1|", "d=|x2-x1|"),
+            FormulaOverlay("Scale", "1 unit = 1 meter", "1u=1m")
+        )
+        MathObjectType.Triangle -> listOf(
+            FormulaOverlay("Area", "A = (1/2)bh", "A=1/2bh"),
+            FormulaOverlay("Angle sum", "a + b + c = 180 deg", "sum=180")
+        )
+        MathObjectType.Circle -> listOf(
+            FormulaOverlay("Area", "A = pi r2", "A=pi r2"),
+            FormulaOverlay("Circumference", "C = 2pi r", "C=2pi r")
+        )
+    }
+    val experience = when (state.mathArExperience) {
+        MathArExperience.Drawing2dTo3d -> listOf(
+            FormulaOverlay("Surface", "z = f(x, y)", "z=f(x,y)"),
+            FormulaOverlay("Extrude", "V approx area x depth", "V=A x d")
+        )
+        MathArExperience.OutdoorGeometry -> listOf(
+            FormulaOverlay("Building volume", "V approx base area x height", "V=A_b h"),
+            FormulaOverlay("Elevation", "slope = rise / run", "rise/run")
+        )
+        MathArExperience.SolarSystem -> listOf(
+            FormulaOverlay("Orbit", "v = 2pi r / T", "v=2pi r/T"),
+            FormulaOverlay("Gravity", "F = Gm1m2 / r2", "F=Gm1m2/r2")
+        )
+        MathArExperience.MarkerBasedGraph -> listOf(
+            FormulaOverlay("Paper mapping", "paper (u, v) -> graph (x, y)", "u,v -> x,y"),
+            FormulaOverlay("3D lift", "z = f(x, y)", "z=f(x,y)")
+        )
+        else -> emptyList()
+    }
+    return (experience + base).distinctBy { it.compact }.take(4)
 }
 
 @Composable
@@ -1882,6 +3704,8 @@ private fun statusText(state: ArViewerUiState): String =
         state.placementHitKind == PlacementHitKind.DepthPoint -> "Depth surface found - tap to place"
         state.placementHitKind == PlacementHitKind.FeaturePoint -> "Air point found - tap to place"
         state.placementHitKind == PlacementHitKind.Instant -> "Air placement ready - tap to place"
+        state.arEngineMode == ArEngineMode.PaperGraph && state.paperGraph?.hasLockedTarget == true -> "Paper graph locked - build in 3D"
+        state.arEngineMode == ArEngineMode.PaperGraph -> "Scan a worksheet or graph target"
         state.arEngineMode == ArEngineMode.OutdoorGeospatialMath -> "Scan outdoor buildings or terrain"
         else -> "Move your phone slowly to place on a surface or in air"
     }

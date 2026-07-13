@@ -9,12 +9,14 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import com.google.ar.core.ArCoreApk
 import com.indianservers.ai_stem.core.ar.ArEngineMode
+import com.indianservers.ai_stem.core.ar.GraphColorMap
 import com.indianservers.ai_stem.core.ar.ArGuidanceEngine
 import com.indianservers.ai_stem.core.ar.ArGuidanceInput
 import com.indianservers.ai_stem.core.ar.ArSensorState
 import com.indianservers.ai_stem.core.ar.ArSensorFusionResult
 import com.indianservers.ai_stem.core.ar.ArStabilityEngine
 import com.indianservers.ai_stem.core.ar.OutdoorGeospatialFrameState
+import com.indianservers.ai_stem.core.ar.PaperGraphFrameState
 import com.indianservers.ai_stem.data.scene.LocalSceneRepository
 import com.indianservers.ai_stem.data.scene.SceneRepository
 import com.indianservers.ai_stem.data.scene.SceneStorageResult
@@ -28,6 +30,7 @@ import com.indianservers.ai_stem.domain.scene.SceneMutations
 import com.indianservers.ai_stem.domain.scene.SnapshotSceneCommand
 import com.indianservers.ai_stem.domain.scene.TransformRotation
 import com.indianservers.ai_stem.domain.scene.TransformScaling
+import com.indianservers.ai_stem.domain.scene.Vector3Value
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -112,20 +115,53 @@ class ArViewerViewModel : ViewModel() {
 
     fun selectArEngineMode(mode: ArEngineMode) {
         _uiState.update {
+            val experience = when (mode) {
+                ArEngineMode.PaperGraph -> MathArExperience.MarkerBasedGraph
+                ArEngineMode.OutdoorGeospatialMath -> MathArExperience.OutdoorGeometry
+                ArEngineMode.Indoor,
+                ArEngineMode.SurfacePlacement,
+                ArEngineMode.AirPlacement -> MathArExperience.MarkerlessObjects
+            }
             it.copy(
                 arEngineMode = mode,
+                mathArExperience = experience,
                 outdoorGeospatial = if (mode == ArEngineMode.OutdoorGeospatialMath) it.outdoorGeospatial else null,
+                paperGraph = if (mode == ArEngineMode.PaperGraph) it.paperGraph else null,
                 placementHitKind = PlacementHitKind.None,
                 hasValidPlacementHit = false,
                 sessionStatus = ArSessionStatus.Scanning,
                 userMessage = UiMessage(
                     when (mode) {
                         ArEngineMode.Indoor -> "Indoor AR mode. Scan a table or floor for math placement."
+                        ArEngineMode.PaperGraph -> "Paper Graph mode. Point at a worksheet or calibrated graph target."
                         ArEngineMode.AirPlacement -> "Air Placement mode. Tap open space, then move slowly to refine."
                         ArEngineMode.SurfacePlacement -> "Surface Placement mode. Aim at a stable real surface."
                         ArEngineMode.OutdoorGeospatialMath -> "Outdoor Geospatial Math. Scan buildings or terrain outside."
                     }
                 )
+            )
+        }
+    }
+
+    fun selectMathArExperience(experience: MathArExperience) {
+        val mode = when (experience) {
+            MathArExperience.MarkerlessObjects,
+            MathArExperience.Drawing2dTo3d,
+            MathArExperience.SolarSystem,
+            MathArExperience.SceneTools -> ArEngineMode.Indoor
+            MathArExperience.MarkerBasedGraph -> ArEngineMode.PaperGraph
+            MathArExperience.OutdoorGeometry -> ArEngineMode.OutdoorGeospatialMath
+        }
+        _uiState.update {
+            it.copy(
+                mathArExperience = experience,
+                arEngineMode = mode,
+                outdoorGeospatial = if (mode == ArEngineMode.OutdoorGeospatialMath) it.outdoorGeospatial else null,
+                paperGraph = if (mode == ArEngineMode.PaperGraph) it.paperGraph else null,
+                placementHitKind = PlacementHitKind.None,
+                hasValidPlacementHit = false,
+                sessionStatus = ArSessionStatus.Scanning,
+                userMessage = UiMessage(experience.userMessage())
             )
         }
     }
@@ -281,6 +317,273 @@ class ArViewerViewModel : ViewModel() {
         }
     }
 
+    fun onPaperGraphFrame(frameState: PaperGraphFrameState) {
+        _uiState.update {
+            it.copy(
+                paperGraph = frameState,
+                arDiagnostics = buildList {
+                    addAll(it.arDiagnostics.filterNot { diagnostic -> diagnostic.startsWith("Paper graph") || diagnostic.startsWith("Augmented image") })
+                    add("Paper graph targets: ${frameState.trackedTargets.size}")
+                    add("Paper graph locked: ${frameState.hasLockedTarget}")
+                    frameState.trackedTargets.firstOrNull()?.let { target ->
+                        add("Augmented image: ${target.name} ${"%.2f".format(target.extentX)}m x ${"%.2f".format(target.extentZ)}m ${target.trackingMethod}")
+                    }
+                }.take(12)
+            )
+        }
+    }
+
+    fun onPaperGraphCalibrationTap(point: PaperGraphCalibrationPoint) {
+        _uiState.update {
+            if (it.arEngineMode != ArEngineMode.PaperGraph || it.paperGraph?.hasLockedTarget != true) {
+                return@update it.copy(userMessage = UiMessage("Scan and lock the worksheet target before calibration."))
+            }
+            val next = when (it.paperGraphCalibration.step) {
+                PaperGraphCalibrationStep.Origin -> it.paperGraphCalibration.copy(
+                    step = PaperGraphCalibrationStep.XAxisPoint,
+                    originLocked = true,
+                    origin = point
+                )
+                PaperGraphCalibrationStep.XAxisPoint -> it.paperGraphCalibration.copy(
+                    step = PaperGraphCalibrationStep.YAxisPoint,
+                    xAxisLocked = true,
+                    xAxisPoint = point
+                )
+                PaperGraphCalibrationStep.YAxisPoint -> it.paperGraphCalibration.copy(
+                    step = PaperGraphCalibrationStep.Complete,
+                    yAxisLocked = true,
+                    yAxisPoint = point
+                )
+                PaperGraphCalibrationStep.Complete -> PaperGraphCalibrationState(origin = point, originLocked = true, step = PaperGraphCalibrationStep.XAxisPoint)
+            }
+            it.copy(
+                paperGraphCalibration = next,
+                selectedObjectType = MathObjectType.SineCurve,
+                selectedDefinitionId = "sine-curve",
+                userMessage = UiMessage(
+                    if (next.isComplete) {
+                        "Graph calibrated. Axes, scale, 3D surface and cross-section are locked to the paper."
+                    } else {
+                        "Locked ${it.paperGraphCalibration.step.prompt}. Tap ${next.step.prompt}."
+                    }
+                )
+            )
+        }
+    }
+
+    fun togglePaperGraphLayer(layer: PaperGraphLayer) {
+        _uiState.update {
+            val layers = if (layer in it.paperGraphLayers) it.paperGraphLayers - layer else it.paperGraphLayers + layer
+            it.copy(paperGraphLayers = layers, userMessage = UiMessage("${layer.label()} ${if (layer in layers) "shown" else "hidden"}."))
+        }
+    }
+
+    fun selectFeaturePhase(phase: ArFeaturePhase) {
+        _uiState.update { it.copy(selectedFeaturePhase = phase, userMessage = UiMessage("${phase.label()} tools shown.")) }
+    }
+
+    fun toggleMathArFeature(feature: MathArFeature) {
+        _uiState.update {
+            val enabled = feature !in it.enabledMathArFeatures
+            val features = if (enabled) it.enabledMathArFeatures + feature else it.enabledMathArFeatures - feature
+            it.copy(
+                enabledMathArFeatures = features,
+                snappingEnabled = if (feature == MathArFeature.ObjectSnapping) enabled else it.snappingEnabled,
+                coordinateGridLocked = if (feature == MathArFeature.CoordinateGridLocking) enabled else it.coordinateGridLocked,
+                compareModeEnabled = if (feature == MathArFeature.CompareMode) enabled else it.compareModeEnabled,
+                depthOcclusionPolishEnabled = if (feature == MathArFeature.DepthOcclusion) enabled else it.depthOcclusionPolishEnabled,
+                graphAnimationEnabled = if (feature in setOf(MathArFeature.AreaUnderCurve, MathArFeature.VolumeBuilder)) true else it.graphAnimationEnabled,
+                measurementsVisible = if (feature == MathArFeature.MeasurementRulerAnchors) true else it.measurementsVisible,
+                formulaCardsVisible = if (feature == MathArFeature.LiveEquationEditing) true else it.formulaCardsVisible,
+                userMessage = UiMessage("${feature.label()} ${if (enabled) "enabled" else "disabled"}.")
+            )
+        }
+    }
+
+    fun updateLiveEquation(equation: String) {
+        _uiState.update {
+            it.copy(
+                liveEquation = equation.take(80),
+                selectedObjectType = MathObjectType.SineCurve,
+                selectedDefinitionId = "sine-curve",
+                userMessage = UiMessage("AR equation updated.")
+            )
+        }
+    }
+
+    fun addGeneratedPointLabel() {
+        _uiState.update {
+            val index = it.pickedPoints.size + 1
+            val x = -1f + index * 0.5f
+            val y = equationValue(it.liveEquation, x)
+            val point = ArPointLabel("P$index (${ "%.1f".format(x) }, ${ "%.2f".format(y) })", x, y, 0f)
+            it.copy(
+                pickedPoints = (it.pickedPoints + point).takeLast(6),
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.PointPicker,
+                labelsVisible = true,
+                userMessage = UiMessage("Point ${point.label} added.")
+            )
+        }
+    }
+
+    fun addPointLabelAt(worldX: Float, worldY: Float, worldZ: Float) {
+        _uiState.update {
+            val index = it.pickedPoints.size + 1
+            val point = ArPointLabel(
+                label = "P$index (${ "%.2f".format(worldX) }, ${ "%.2f".format(worldY) }, ${ "%.2f".format(worldZ) })",
+                x = worldX,
+                y = worldY,
+                z = worldZ
+            )
+            it.copy(
+                pickedPoints = (it.pickedPoints + point).takeLast(6),
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.PointPicker,
+                labelsVisible = true,
+                userMessage = UiMessage("Picked ${point.label}.")
+            )
+        }
+    }
+
+    fun addRulerAnchor() {
+        _uiState.update {
+            val index = it.rulerAnchors.size + 1
+            val anchor = ArPointLabel("R$index", index * 0.18f, 0f, index * 0.08f)
+            it.copy(
+                rulerAnchors = (it.rulerAnchors + anchor).takeLast(2),
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.MeasurementRulerAnchors,
+                measurementsVisible = true,
+                userMessage = UiMessage("Ruler anchor ${anchor.label} added.")
+            )
+        }
+    }
+
+    fun addRulerAnchorAt(worldX: Float, worldY: Float, worldZ: Float) {
+        _uiState.update {
+            val index = (it.rulerAnchors.size % 2) + 1
+            val anchor = ArPointLabel("R$index", worldX, worldY, worldZ)
+            it.copy(
+                rulerAnchors = (it.rulerAnchors + anchor).takeLast(2),
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.MeasurementRulerAnchors,
+                measurementsVisible = true,
+                userMessage = UiMessage("Ruler anchor ${anchor.label} placed.")
+            )
+        }
+    }
+
+    fun recordPlacementPoint(worldX: Float, worldY: Float, worldZ: Float) {
+        _uiState.update {
+            it.copy(lastPlacementPoint = ArPointLabel("anchor", worldX, worldY, worldZ))
+        }
+    }
+
+    fun setCompareOffset(offsetMeters: Float) {
+        _uiState.update {
+            it.copy(
+                compareOffsetMeters = offsetMeters.coerceIn(0.18f, 0.8f),
+                compareModeEnabled = true,
+                enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.CompareMode
+            )
+        }
+    }
+
+    fun selectFloatingTool(tool: FloatingMathTool) {
+        _uiState.update {
+            it.copy(
+                activeFloatingTool = tool,
+                axesVisible = if (tool == FloatingMathTool.Axes) !it.axesVisible else it.axesVisible,
+                gridVisible = if (tool == FloatingMathTool.Grid) !it.gridVisible else it.gridVisible,
+                labelsVisible = if (tool == FloatingMathTool.Labels) !it.labelsVisible else it.labelsVisible,
+                formulaCardsCollapsed = if (tool == FloatingMathTool.Formula && it.formulaCardsVisible) !it.formulaCardsCollapsed else it.formulaCardsCollapsed,
+                formulaCardsVisible = if (tool == FloatingMathTool.Formula && !it.formulaCardsVisible) true else it.formulaCardsVisible,
+                measurementsVisible = if (tool == FloatingMathTool.Measure) !it.measurementsVisible else it.measurementsVisible,
+                slicePlaneVisible = if (tool == FloatingMathTool.Slice) !it.slicePlaneVisible else it.slicePlaneVisible,
+                graphAnimationEnabled = if (tool == FloatingMathTool.Animate) !it.graphAnimationEnabled else it.graphAnimationEnabled,
+                captureRequested = tool == FloatingMathTool.Capture,
+                userMessage = UiMessage(tool.userMessage())
+            )
+        }
+    }
+
+    fun setGraphColorMap(colorMap: GraphColorMap) {
+        _uiState.update { it.copy(graphColorMap = colorMap, userMessage = UiMessage("Graph colors show ${colorMap.label.lowercase()}.")) }
+    }
+
+    fun setFunction3dTransformMode(mode: Function3dTransformMode) {
+        _uiState.update {
+            it.copy(
+                function3dTransformMode = mode,
+                selectedObjectType = MathObjectType.SineCurve,
+                selectedDefinitionId = "sine-curve",
+                graphAnimationEnabled = when (mode) {
+                    Function3dTransformMode.Surface -> it.graphAnimationEnabled
+                    Function3dTransformMode.Extrusion -> true
+                    Function3dTransformMode.SolidOfRevolution -> true
+                    Function3dTransformMode.TangentPlane -> true
+                    Function3dTransformMode.CrossSectionSlices -> true
+                },
+                slicePlaneVisible = mode == Function3dTransformMode.CrossSectionSlices || it.slicePlaneVisible,
+                userMessage = UiMessage("${mode.label()} selected for the 2D function.")
+            )
+        }
+    }
+
+    fun setGraphAnimationProgress(progress: Float) {
+        _uiState.update { it.copy(graphAnimationProgress = progress.coerceIn(0f, 1f)) }
+    }
+
+    fun setGraphAnimationMode(mode: GraphAnimationMode) {
+        _uiState.update {
+            it.copy(
+                graphAnimationMode = mode,
+                graphAnimationEnabled = true,
+                userMessage = UiMessage("${mode.label()} animation selected.")
+            )
+        }
+    }
+
+    fun setGraphSlicePosition(position: Float) {
+        _uiState.update {
+            it.copy(
+                graphSlicePosition = position.coerceIn(0f, 1f),
+                slicePlaneVisible = true
+            )
+        }
+    }
+
+    fun advancePaperGraphCalibration() {
+        _uiState.update {
+            val next = when (it.paperGraphCalibration.step) {
+                PaperGraphCalibrationStep.Origin -> it.paperGraphCalibration.copy(
+                    step = PaperGraphCalibrationStep.XAxisPoint,
+                    originLocked = true
+                )
+                PaperGraphCalibrationStep.XAxisPoint -> it.paperGraphCalibration.copy(
+                    step = PaperGraphCalibrationStep.YAxisPoint,
+                    xAxisLocked = true
+                )
+                PaperGraphCalibrationStep.YAxisPoint -> it.paperGraphCalibration.copy(
+                    step = PaperGraphCalibrationStep.Complete,
+                    yAxisLocked = true
+                )
+                PaperGraphCalibrationStep.Complete -> PaperGraphCalibrationState()
+            }
+            it.copy(
+                paperGraphCalibration = next,
+                userMessage = UiMessage(
+                    if (next.isComplete) {
+                        "Paper graph calibrated. Place a 3D surface or slice plane."
+                    } else {
+                        "Tap ${next.step.prompt.lowercase()} on the paper graph."
+                    }
+                )
+            )
+        }
+    }
+
+    fun acknowledgeCapture() {
+        _uiState.update { it.copy(captureRequested = false, userMessage = UiMessage("AR capture overlay prepared.")) }
+    }
+
     fun onRuntimeError(stage: String, throwable: Throwable) {
         Log.e("AiStemAR", stage, throwable)
         _uiState.update {
@@ -300,7 +603,11 @@ class ArViewerViewModel : ViewModel() {
     fun onAnchorEstablished() {
         Log.d("AiStemAR", "Anchor established objects=${_uiState.value.mathScene.objects.size}")
         if (_uiState.value.mathScene.objects.isEmpty()) {
-            mutate("Place object") { SceneMutations.addObject(it, _uiState.value.selectedDefinitionId) }
+            val current = _uiState.value
+            val placement = current.lastPlacementPoint?.let { point ->
+                snappedPosition(point, current)
+            } ?: Vector3Value()
+            mutate("Place object") { SceneMutations.addObject(it, current.selectedDefinitionId, placement) }
         }
         val placed = _uiState.value.mathScene.primarySelectedObject ?: _uiState.value.mathScene.objects.firstOrNull()
         _uiState.update {
@@ -524,6 +831,118 @@ class ArViewerViewModel : ViewModel() {
 
     private fun hasFineLocation(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+}
+
+private val GraphColorMap.label: String
+    get() = when (this) {
+        GraphColorMap.Height -> "Height"
+        GraphColorMap.Slope -> "Slope"
+        GraphColorMap.Curvature -> "Curvature"
+        GraphColorMap.XValue -> "X value"
+        GraphColorMap.YValue -> "Y value"
+    }
+
+private val PaperGraphCalibrationStep.prompt: String
+    get() = when (this) {
+        PaperGraphCalibrationStep.Origin -> "origin"
+        PaperGraphCalibrationStep.XAxisPoint -> "X-axis point"
+        PaperGraphCalibrationStep.YAxisPoint -> "Y-axis point"
+        PaperGraphCalibrationStep.Complete -> "reset calibration"
+    }
+
+private fun FloatingMathTool.userMessage(): String = when (this) {
+    FloatingMathTool.Axes -> "Axes visibility toggled."
+    FloatingMathTool.Grid -> "Grid visibility toggled."
+    FloatingMathTool.Labels -> "Tap labels toggled."
+    FloatingMathTool.Formula -> "Formula cards toggled."
+    FloatingMathTool.Measure -> "Measurement overlay toggled."
+    FloatingMathTool.Slice -> "Interactive slice plane toggled."
+    FloatingMathTool.Animate -> "Graph animation scrubber toggled."
+    FloatingMathTool.Capture -> "Quick capture overlay ready."
+}
+
+private fun GraphAnimationMode.label(): String = when (this) {
+    GraphAnimationMode.RotateGraph -> "Rotate graph"
+    GraphAnimationMode.SweepArea -> "Sweep area"
+    GraphAnimationMode.BuildVolume -> "Build volume"
+    GraphAnimationMode.MoveTangentPoint -> "Move tangent point"
+    GraphAnimationMode.AnimateSineWave -> "Animate sine wave"
+}
+
+private fun Function3dTransformMode.label(): String = when (this) {
+    Function3dTransformMode.Surface -> "Surface"
+    Function3dTransformMode.Extrusion -> "Extrusion"
+    Function3dTransformMode.SolidOfRevolution -> "Solid of revolution"
+    Function3dTransformMode.TangentPlane -> "Tangent plane"
+    Function3dTransformMode.CrossSectionSlices -> "Cross-section slices"
+}
+
+private fun PaperGraphLayer.label(): String = when (this) {
+    PaperGraphLayer.Axes -> "Axes"
+    PaperGraphLayer.Scale -> "Scale"
+    PaperGraphLayer.Graph -> "Graph"
+    PaperGraphLayer.Surface3d -> "3D Surface"
+    PaperGraphLayer.CrossSection -> "Cross Section"
+}
+
+private fun ArFeaturePhase.label(): String = when (this) {
+    ArFeaturePhase.DirectInteraction -> "Phase 1"
+    ArFeaturePhase.GraphAnalysis -> "Phase 2"
+    ArFeaturePhase.EngineStrengthening -> "Phase 3"
+}
+
+private fun MathArFeature.label(): String = when (this) {
+    MathArFeature.ObjectSnapping -> "Object snapping"
+    MathArFeature.GestureHandles -> "Gesture handles"
+    MathArFeature.LiveEquationEditing -> "Live equation editing"
+    MathArFeature.PointPicker -> "Point picker"
+    MathArFeature.RootVisualizer -> "Root visualizer"
+    MathArFeature.TangentNormalTool -> "Tangent / normal"
+    MathArFeature.AreaUnderCurve -> "Area under curve"
+    MathArFeature.VolumeBuilder -> "Volume builder"
+    MathArFeature.MeasurementRulerAnchors -> "Ruler anchors"
+    MathArFeature.CoordinateGridLocking -> "Coordinate grid locking"
+    MathArFeature.MultiObjectConstraints -> "Multi-object constraints"
+    MathArFeature.DepthOcclusion -> "Depth occlusion"
+    MathArFeature.ScenePersistence -> "Scene persistence"
+    MathArFeature.PrecisionConfidenceHud -> "Precision HUD"
+    MathArFeature.CompareMode -> "Compare mode"
+}
+
+private fun equationValue(equation: String, x: Float): Float {
+    val clean = equation.lowercase().replace(" ", "")
+    return when {
+        "cos" in clean -> kotlin.math.cos(x)
+        "x^2" in clean || "x2" in clean || "parabola" in clean -> x * x
+        "2x" in clean || "2*x" in clean -> 2f * x
+        "0.5x" in clean || "0.5*x" in clean -> 0.5f * x
+        clean.contains("x") && !clean.contains("sin") -> x
+        else -> kotlin.math.sin(x)
+    }
+}
+
+private fun snappedPosition(point: ArPointLabel, state: ArViewerUiState): Vector3Value {
+    fun snap(value: Float, interval: Float): Double =
+        if (interval <= 0f) value.toDouble() else (kotlin.math.round(value / interval) * interval).toDouble()
+    val interval = when {
+        state.coordinateGridLocked -> 0.1f
+        state.snappingEnabled -> 0.05f
+        else -> 0f
+    }
+    return Vector3Value(
+        x = snap(point.x, interval),
+        y = if (state.coordinateGridLocked || state.snappingEnabled) 0.0 else point.y.toDouble(),
+        z = snap(point.z, interval)
+    )
+}
+
+private fun MathArExperience.userMessage(): String = when (this) {
+    MathArExperience.MarkerlessObjects -> "Markerless math objects. Place graphs, solids and vectors on surfaces."
+    MathArExperience.Drawing2dTo3d -> "Drawing 2D to 3D. Use calibration, color maps and slicing tools."
+    MathArExperience.MarkerBasedGraph -> "Marker-based graph mode. Scan a worksheet or printed target."
+    MathArExperience.OutdoorGeometry -> "Outdoor geometry mode. Scan buildings and terrain."
+    MathArExperience.SolarSystem -> "Solar System mode. Place an orbit model markerlessly."
+    MathArExperience.SceneTools -> "Scene tools. Manage layers, captures, labels and saved scenes."
 }
 
 private data class ArSensorReadiness(

@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Biotech
 import androidx.compose.material.icons.outlined.Calculate
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Card
@@ -41,7 +42,11 @@ import com.indianservers.ai_stem.core.model.disabledMessage
 import kotlinx.coroutines.launch
 
 @Composable
-fun SubjectSelectionScreen(onBack: () -> Unit, onMathematics: () -> Unit) {
+fun SubjectSelectionScreen(
+    onBack: () -> Unit,
+    onMathematics: () -> Unit,
+    onSolarSystem: () -> Unit
+) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     Scaffold(
@@ -64,8 +69,12 @@ fun SubjectSelectionScreen(onBack: () -> Unit, onMathematics: () -> Unit) {
                     subject = subject,
                     icon = subject.icon(),
                     onClick = {
-                        if (subject.enabled) onMathematics()
-                        else scope.launch { snackbarHostState.showSnackbar(subject.disabledMessage()) }
+                        when {
+                            subject == StemSubject.Mathematics -> onMathematics()
+                            subject == StemSubject.SolarSystem -> onSolarSystem()
+                            subject.enabled -> onMathematics()
+                            else -> scope.launch { snackbarHostState.showSnackbar(subject.disabledMessage()) }
+                        }
                     }
                 )
             }
@@ -126,6 +135,7 @@ fun SimpleHeader(title: String, onBack: () -> Unit) {
 
 private fun StemSubject.icon(): ImageVector = when (this) {
     StemSubject.Mathematics -> Icons.Outlined.Calculate
+    StemSubject.SolarSystem -> Icons.Outlined.Public
     StemSubject.Physics -> Icons.Outlined.Speed
     StemSubject.Chemistry -> Icons.Outlined.Science
     StemSubject.Biology -> Icons.Outlined.Biotech

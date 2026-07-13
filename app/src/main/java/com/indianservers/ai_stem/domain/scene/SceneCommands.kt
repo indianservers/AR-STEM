@@ -58,10 +58,14 @@ data class SceneHistory(
 object SceneMutations {
     fun addObject(scene: MathScene, definitionId: String): MathScene {
         val offset = scene.objects.size * 0.12
+        return addObject(scene, definitionId, Vector3Value(offset, 0.0, offset))
+    }
+
+    fun addObject(scene: MathScene, definitionId: String, position: Vector3Value): MathScene {
         val objectState = SceneObjectFactory.create(
             definitionId = definitionId,
             existingNames = scene.objects.map { it.displayName },
-            position = Vector3Value(offset, 0.0, offset)
+            position = position
         )
         return selectOnly(scene.copy(objects = scene.objects + objectState, updatedAt = System.currentTimeMillis()), objectState.id)
     }

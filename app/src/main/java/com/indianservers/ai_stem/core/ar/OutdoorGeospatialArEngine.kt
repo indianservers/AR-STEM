@@ -11,7 +11,8 @@ import kotlin.math.atan2
 import kotlin.math.sqrt
 
 enum class ArEngineMode(val label: String) {
-    Indoor("Indoor AR"),
+    Indoor("Markerless AR"),
+    PaperGraph("Marker-Based AR"),
     AirPlacement("Air Placement"),
     SurfacePlacement("Surface Placement"),
     OutdoorGeospatialMath("Outdoor Geospatial Math")
