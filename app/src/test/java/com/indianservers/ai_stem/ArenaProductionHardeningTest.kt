@@ -31,6 +31,7 @@ class ArenaProductionHardeningTest {
         assertEquals(6, registry.games.size)
         assertTrue(arena!!.runtimeContract.hostAuthoritative)
         assertTrue(arena.runtimeContract.requiresSharedOrigin)
+        assertEquals("Math Fortress AR", arena.definition.title)
         assertTrue(arena.definition.capabilities.any { it.name == "HostAuthoritative" })
     }
 

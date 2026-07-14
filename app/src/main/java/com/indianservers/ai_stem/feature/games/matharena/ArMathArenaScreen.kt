@@ -64,6 +64,7 @@ import com.indianservers.ai_stem.feature.games.spatial.SpatialSessionState
 @Composable
 fun ArMathArenaScreen(
     onBack: () -> Unit,
+    onHowToPlay: (() -> Unit)? = null,
     viewModel: ArenaLobbyViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -100,7 +101,7 @@ fun ArMathArenaScreen(
             item { ArenaHero(state) }
             item { StatusCard(state.status) }
             when (state.mode) {
-                ArenaShellMode.Landing -> item { LandingMenu(viewModel) }
+                ArenaShellMode.Landing -> item { LandingMenu(viewModel, onHowToPlay) }
                 ArenaShellMode.HostSetup -> item { HostSetupCard(state, viewModel) }
                 ArenaShellMode.JoinGame -> {
                     item { JoinCard(state, viewModel) }
@@ -163,7 +164,7 @@ private fun ArenaHero(state: ArenaLobbyUiState) {
 }
 
 @Composable
-private fun LandingMenu(viewModel: ArenaLobbyViewModel) {
+private fun LandingMenu(viewModel: ArenaLobbyViewModel, onHowToPlay: (() -> Unit)?) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Play", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -181,7 +182,12 @@ private fun LandingMenu(viewModel: ArenaLobbyViewModel) {
                 "Accessibility" to ArenaShellMode.Accessibility,
                 "Game Settings" to ArenaShellMode.Settings
             ).forEach { (label, mode) ->
-                OutlinedButton(onClick = { viewModel.setMode(mode) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
+                OutlinedButton(
+                    onClick = {
+                        if (mode == ArenaShellMode.HowToPlay && onHowToPlay != null) onHowToPlay() else viewModel.setMode(mode)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(label) }
             }
         }
     }

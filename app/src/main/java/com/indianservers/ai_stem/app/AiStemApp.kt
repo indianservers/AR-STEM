@@ -7,7 +7,18 @@ import androidx.navigation.compose.rememberNavController
 import com.indianservers.ai_stem.core.designsystem.AiStemTheme
 import com.indianservers.ai_stem.feature.arviewer.ArViewerScreen
 import com.indianservers.ai_stem.feature.games.GamesLibraryScreen
+import com.indianservers.ai_stem.feature.games.GameDetailsScreen
+import com.indianservers.ai_stem.feature.games.GameComingSoonScreen
+import com.indianservers.ai_stem.feature.games.GameHowToPlayScreen
+import com.indianservers.ai_stem.feature.games.authoring.TeacherAuthoringStudioScreen
+import com.indianservers.ai_stem.feature.games.coordinateconquest.CoordinateConquestScreen
+import com.indianservers.ai_stem.feature.games.equationescape.EquationEscapeScreen
+import com.indianservers.ai_stem.feature.games.fractionfactory.FractionFactoryScreen
+import com.indianservers.ai_stem.feature.games.geometryarchitect.GeometryArchitectScreen
 import com.indianservers.ai_stem.feature.games.matharena.ArMathArenaScreen
+import com.indianservers.ai_stem.feature.games.mathexpedition.MathExpeditionScreen
+import com.indianservers.ai_stem.feature.games.navigation.GamesRoutes
+import com.indianservers.ai_stem.feature.games.tournament.TournamentHubScreen
 import com.indianservers.ai_stem.feature.graphing.GraphingStudioScreen
 import com.indianservers.ai_stem.feature.labs.AlgebraLaboratoryScreen
 import com.indianservers.ai_stem.feature.labs.CalculusLaboratoryScreen
@@ -56,15 +67,111 @@ fun AiStemApp() {
             composable(AppDestination.Games.route) {
                 GamesLibraryScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenGame = {
-                        navController.navigate(AppDestination.ArMathArena.route) {
+                    onOpenTournamentHub = {
+                        navController.navigate(AppDestination.TournamentHub.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenTeacherAuthoringStudio = {
+                        navController.navigate(AppDestination.TeacherAuthoringStudio.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenGame = { game ->
+                        navController.navigate(game.destination.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenDetails = { game ->
+                        navController.navigate(GamesRoutes.details(game.id)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onHowToPlay = { game ->
+                        navController.navigate(GamesRoutes.howToPlay(game.id)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onComingSoon = { game ->
+                        navController.navigate(GamesRoutes.comingSoon(game.id)) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+            composable(GamesRoutes.Details) { backStackEntry ->
+                GameDetailsScreen(
+                    gameId = backStackEntry.arguments?.getString("gameId").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onPlay = { game ->
+                        navController.navigate(game.destination.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onHowToPlay = { game ->
+                        navController.navigate(GamesRoutes.howToPlay(game.id)) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+            composable(GamesRoutes.HowToPlay) { backStackEntry ->
+                GameHowToPlayScreen(
+                    gameId = backStackEntry.arguments?.getString("gameId").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onDetails = { game ->
+                        navController.navigate(GamesRoutes.details(game.id)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onPlay = { game ->
+                        navController.navigate(game.destination.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+            composable(GamesRoutes.ComingSoon) { backStackEntry ->
+                GameComingSoonScreen(
+                    gameId = backStackEntry.arguments?.getString("gameId").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onHowToPlay = { game ->
+                        navController.navigate(GamesRoutes.howToPlay(game.id)) {
                             launchSingleTop = true
                         }
                     }
                 )
             }
             composable(AppDestination.ArMathArena.route) {
-                ArMathArenaScreen(onBack = { navController.popBackStack() })
+                ArMathArenaScreen(
+                    onBack = { navController.popBackStack() },
+                    onHowToPlay = {
+                        navController.navigate(GamesRoutes.howToPlay("ar-math-arena")) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+            composable(AppDestination.TournamentHub.route) {
+                TournamentHubScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.TeacherAuthoringStudio.route) {
+                TeacherAuthoringStudioScreen(onBack = { navController.popBackStack() })
+            }
+            composable(GamesRoutes.EquationEscape) {
+                EquationEscapeScreen(onBack = { navController.popBackStack() })
+            }
+            composable(GamesRoutes.GeometryArchitect) {
+                GeometryArchitectScreen(onBack = { navController.popBackStack() })
+            }
+            composable(GamesRoutes.FractionFactory) {
+                FractionFactoryScreen(onBack = { navController.popBackStack() })
+            }
+            composable(GamesRoutes.CoordinateConquest) {
+                CoordinateConquestScreen(onBack = { navController.popBackStack() })
+            }
+            composable(GamesRoutes.MathExpedition) {
+                MathExpeditionScreen(onBack = { navController.popBackStack() })
             }
             composable(AppDestination.Mathematics.route) {
                 MathematicsHomeScreen(

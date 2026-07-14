@@ -4,6 +4,8 @@ sealed class AppDestination(val route: String) {
     data object Welcome : AppDestination("welcome")
     data object Subjects : AppDestination("subjects")
     data object Games : AppDestination("games")
+    data object TournamentHub : AppDestination("games/tournament_hub")
+    data object TeacherAuthoringStudio : AppDestination("games/teacher_authoring_studio")
     data object ArMathArena : AppDestination("games/ar_math_arena")
     data object Mathematics : AppDestination("mathematics")
     data object Projects : AppDestination("projects")
