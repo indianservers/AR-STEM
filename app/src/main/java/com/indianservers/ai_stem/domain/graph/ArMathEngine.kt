@@ -115,7 +115,7 @@ class ArMathEngine(
     ): ArCompiledExpression {
         val normalized = normalizeArFormula(source)
         val kind = detectKind(normalized)
-        val parse = parser.parse(normalized)
+        val parse = validateForKind(normalized, kind)
         val parameters = if (parse is ParseOutcome.Success) {
             buildParameterSliders(parse.variables, existingSliders)
         } else {
@@ -164,10 +164,11 @@ class ArMathEngine(
             style = GraphStyle(color = 0xFF2E7DFF),
             parse = compiled.parse
         )
-        val curve = if (compiled.kind == GraphExpressionKind.ExplicitSurface3D) {
-            sampleCurveFromSurface(compiled)
-        } else {
-            sampler.sampleExpression(expression, compiled.domain.toViewport(), compiled.qualityPreset).firstOrNull()
+        val curve = when (compiled.kind) {
+            GraphExpressionKind.ExplicitSurface3D -> sampleCurveFromSurface(compiled)
+            GraphExpressionKind.Parametric2D,
+            GraphExpressionKind.SpaceCurve -> sampleParametricCurve(compiled)
+            else -> sampler.sampleExpression(expression, compiled.domain.toViewport(), compiled.qualityPreset).firstOrNull()
                 ?: GraphCurve(expression.id, emptyList(), listOf("No visible curve samples."))
         }
         val surface = if (compiled.kind == GraphExpressionKind.ExplicitSurface3D) {
@@ -176,6 +177,37 @@ class ArMathEngine(
             null
         }
         return ArGraphSampleSet(curve, surface, curve.warnings + (surface?.warnings ?: emptyList()))
+    }
+
+    private fun validateForKind(source: String, kind: GraphExpressionKind): ParseOutcome =
+        when (kind) {
+            GraphExpressionKind.Parametric2D,
+            GraphExpressionKind.SpaceCurve -> validateParametric(source)
+            GraphExpressionKind.Implicit2D,
+            GraphExpressionKind.Inequality2D -> validateImplicitOrInequality(source)
+            else -> parser.parse(source)
+        }
+
+    private fun validateParametric(source: String): ParseOutcome {
+        val parts = normalizeParametricSource(source).split(",").map { it.trim() }.filter { it.isNotBlank() }
+        if (parts.size < 2) return ParseOutcome.Failure("Use parametric form: x=cos(t), y=sin(t).")
+        val parsed = parts.map { parser.parse(it.substringAfter("=")) }
+        val first = parsed.firstOrNull() as? ParseOutcome.Success
+            ?: return parsed.firstOrNull { it is ParseOutcome.Failure } ?: ParseOutcome.Failure("Parametric expression could not be parsed.")
+        val variables = parsed.filterIsInstance<ParseOutcome.Success>().flatMap { it.variables }.toSet()
+        return ParseOutcome.Success(first.expression, variables)
+    }
+
+    private fun validateImplicitOrInequality(source: String): ParseOutcome {
+        val operator = listOf("<=", ">=", "<", ">", "=").firstOrNull { source.contains(it) }
+            ?: return ParseOutcome.Failure("Use an implicit relation like x^2 + y^2 = 1.")
+        val parts = source.split(operator, limit = 2).map { it.trim() }
+        if (parts.size != 2 || parts.any { it.isBlank() }) return ParseOutcome.Failure("Both sides of the relation are required.")
+        val left = parser.parse(parts[0])
+        val right = parser.parse(parts[1])
+        if (left !is ParseOutcome.Success) return left
+        if (right !is ParseOutcome.Success) return right
+        return ParseOutcome.Success(left.expression, left.variables + right.variables)
     }
 
     fun analyze(
@@ -240,6 +272,32 @@ class ArMathEngine(
             if (z.isFinite()) GraphPoint(x, z) else null
         }
         return GraphCurve("ar-live-expression", points)
+    }
+
+    private fun sampleParametricCurve(compiled: ArCompiledExpression): GraphCurve {
+        val parts = normalizeParametricSource(compiled.normalizedSource)
+            .split(",")
+            .map { it.substringAfter("=").trim() }
+            .filter { it.isNotBlank() }
+        if (parts.size < 2) return GraphCurve("ar-live-expression", emptyList(), listOf("Use x=..., y=... parametric form."))
+        val xParse = parser.parse(parts[0]) as? ParseOutcome.Success
+            ?: return GraphCurve("ar-live-expression", emptyList(), listOf("Parametric x(t) could not be parsed."))
+        val yParse = parser.parse(parts[1]) as? ParseOutcome.Success
+            ?: return GraphCurve("ar-live-expression", emptyList(), listOf("Parametric y(t) could not be parsed."))
+        val samples = compiled.qualityPreset.curveSamples.coerceIn(120, 960)
+        val baseVariables = variables(compiled.parameters)
+        val points = (0..samples).mapNotNull { index ->
+            val t = compiled.domain.xMin + (compiled.domain.xMax - compiled.domain.xMin) * index / samples
+            val vars = baseVariables + mapOf("t" to t)
+            val x = evaluator.evaluate(xParse.expression, vars).value
+            val y = evaluator.evaluate(yParse.expression, vars).value
+            if (x != null && y != null && x.isFinite() && y.isFinite()) {
+                GraphPoint(x.coerceIn(compiled.domain.xMin, compiled.domain.xMax), y.coerceIn(compiled.domain.yMin, compiled.domain.yMax))
+            } else {
+                null
+            }
+        }
+        return GraphCurve("ar-live-expression", points, if (points.isEmpty()) listOf("No visible parametric samples.") else emptyList())
     }
 
     private fun findZeroCrossings(compiled: ArCompiledExpression, samples: Int, function: (Double) -> Double): List<GraphPoint> {
@@ -376,6 +434,10 @@ class ArMathEngine(
     private fun detectKind(source: String): GraphExpressionKind {
         val left = source.substringBefore("=").trim().lowercase()
         return when {
+            source.contains("<=") || source.contains(">=") || source.contains("<") || source.contains(">") -> GraphExpressionKind.Inequality2D
+            source.looksSpaceCurve() -> GraphExpressionKind.SpaceCurve
+            source.looksParametric2D() -> GraphExpressionKind.Parametric2D
+            source.contains("=") && left !in setOf("y", "z", "r") -> GraphExpressionKind.Implicit2D
             left == "z" || source.contains("y") && source.contains("x") && !source.startsWith("y") -> GraphExpressionKind.ExplicitSurface3D
             left == "r" -> GraphExpressionKind.Polar
             else -> GraphExpressionKind.Explicit2D
@@ -423,6 +485,23 @@ fun normalizeArFormula(source: String): String =
         .replace("θ", "theta")
         .replace("²", "^2")
         .replace("³", "^3")
+        .trim()
+
+private fun String.looksParametric2D(): Boolean {
+    val normalized = lowercase().replace(" ", "")
+    return normalized.contains(",") && normalized.contains("x=") && normalized.contains("y=")
+}
+
+private fun String.looksSpaceCurve(): Boolean {
+    val normalized = lowercase().replace(" ", "")
+    return normalized.contains(",") && normalized.contains("x=") && normalized.contains("y=") && normalized.contains("z=")
+}
+
+private fun normalizeParametricSource(source: String): String =
+    source
+        .removePrefix("param:")
+        .removePrefix("curve:")
+        .removePrefix("space:")
         .trim()
 
 private fun Double.coerceFinite(limit: Double): Double =

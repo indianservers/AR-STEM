@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -33,19 +34,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.indianservers.ai_stem.core.model.StemSubject
 import com.indianservers.ai_stem.core.model.disabledMessage
+import com.indianservers.ai_stem.feature.games.GamesIndexIcon
 import kotlinx.coroutines.launch
 
 @Composable
 fun SubjectSelectionScreen(
     onBack: () -> Unit,
     onMathematics: () -> Unit,
-    onSolarSystem: () -> Unit
+    onSolarSystem: () -> Unit,
+    onGames: () -> Unit
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -78,6 +83,34 @@ fun SubjectSelectionScreen(
                     }
                 )
             }
+            item {
+                GamesEntryCard(onClick = onGames)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GamesEntryCard(onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("games-entry-card")
+            .semantics {
+                role = Role.Button
+                contentDescription = "Games"
+            },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            GamesIndexIcon(Modifier.size(48.dp))
+            Text("Games", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("Play STEM challenges, team activities and AR math games.", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

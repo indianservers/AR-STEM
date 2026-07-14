@@ -148,9 +148,11 @@ import com.indianservers.ai_stem.domain.mathematics.DefaultMathObjectRegistry
 import com.indianservers.ai_stem.domain.mathematics.MeasurementFormatter
 import com.indianservers.ai_stem.domain.mathematics.parameterNumber
 import com.indianservers.ai_stem.domain.graph.ArMathEngine
+import com.indianservers.ai_stem.domain.graph.ArAdvancedMathTools
 import com.indianservers.ai_stem.domain.graph.ArGraphDomain
 import com.indianservers.ai_stem.domain.graph.GraphExpressionKind
 import com.indianservers.ai_stem.domain.graph.GraphQualityPreset
+import com.indianservers.ai_stem.domain.graph.label
 import com.indianservers.ai_stem.domain.graph.ParseOutcome
 import com.indianservers.ai_stem.domain.geometry.ConstructionConstraintKind
 import com.indianservers.ai_stem.domain.geometry.ConstructionObjectKind
@@ -350,6 +352,7 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
                         onGraphDomain = viewModel::updateArGraphDomain,
                         onComparisonEquation = viewModel::updateComparisonEquation,
                         onAnalysisFocus = viewModel::setArGraphAnalysisFocus,
+                        onAdvancedMathTool = viewModel::applyAdvancedMathTool,
                         onAddPointLabel = viewModel::addGeneratedPointLabel,
                         onAddRulerAnchor = viewModel::addRulerAnchor,
                         onCompareOffset = viewModel::setCompareOffset,
@@ -1761,6 +1764,7 @@ private fun ArChrome(
     onGraphDomain: (ArGraphDomain) -> Unit,
     onComparisonEquation: (String) -> Unit,
     onAnalysisFocus: (Float) -> Unit,
+    onAdvancedMathTool: (String) -> Unit,
     onAddPointLabel: () -> Unit,
     onAddRulerAnchor: () -> Unit,
     onCompareOffset: (Float) -> Unit,
@@ -1901,6 +1905,7 @@ private fun ArChrome(
                         onGraphDomain = onGraphDomain,
                         onComparisonEquation = onComparisonEquation,
                         onAnalysisFocus = onAnalysisFocus,
+                        onAdvancedMathTool = onAdvancedMathTool,
                         onAddPointLabel = onAddPointLabel,
                         onAddRulerAnchor = onAddRulerAnchor,
                         onCompareOffset = onCompareOffset,
@@ -2422,6 +2427,7 @@ private fun MathExperiencePanel(
     onGraphDomain: (ArGraphDomain) -> Unit,
     onComparisonEquation: (String) -> Unit,
     onAnalysisFocus: (Float) -> Unit,
+    onAdvancedMathTool: (String) -> Unit,
     onAddPointLabel: () -> Unit,
     onAddRulerAnchor: () -> Unit,
     onCompareOffset: (Float) -> Unit,
@@ -2492,6 +2498,7 @@ private fun MathExperiencePanel(
             onGraphDomain = onGraphDomain,
             onComparisonEquation = onComparisonEquation,
             onAnalysisFocus = onAnalysisFocus,
+            onAdvancedMathTool = onAdvancedMathTool,
             onAddPointLabel = onAddPointLabel,
             onAddRulerAnchor = onAddRulerAnchor,
             onCompareOffset = onCompareOffset,
@@ -2552,6 +2559,7 @@ private fun MathArPhaseToolsPanel(
     onGraphDomain: (ArGraphDomain) -> Unit,
     onComparisonEquation: (String) -> Unit,
     onAnalysisFocus: (Float) -> Unit,
+    onAdvancedMathTool: (String) -> Unit,
     onAddPointLabel: () -> Unit,
     onAddRulerAnchor: () -> Unit,
     onCompareOffset: (Float) -> Unit,
@@ -2632,7 +2640,8 @@ private fun MathArPhaseToolsPanel(
                 ArGraphAnalysisControls(
                     state = state,
                     onComparisonEquation = onComparisonEquation,
-                    onAnalysisFocus = onAnalysisFocus
+                    onAnalysisFocus = onAnalysisFocus,
+                    onAdvancedMathTool = onAdvancedMathTool
                 )
             }
             ArFeaturePhase.EngineStrengthening -> {
@@ -2778,7 +2787,8 @@ private fun ArGestureHandleControls(
 private fun ArGraphAnalysisControls(
     state: ArViewerUiState,
     onComparisonEquation: (String) -> Unit,
-    onAnalysisFocus: (Float) -> Unit
+    onAnalysisFocus: (Float) -> Unit,
+    onAdvancedMathTool: (String) -> Unit
 ) {
     val report = state.arGraphAnalysis
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2825,6 +2835,39 @@ private fun ArGraphAnalysisControls(
         }
         report.warnings.forEach { warning ->
             Text(warning, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+        }
+        AdvancedMathToolsPanel(
+            state = state,
+            onAdvancedMathTool = onAdvancedMathTool
+        )
+    }
+}
+
+@Composable
+private fun AdvancedMathToolsPanel(
+    state: ArViewerUiState,
+    onAdvancedMathTool: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Advanced AR Math", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ArAdvancedMathTools.tools) { tool ->
+                FilterChip(
+                    selected = state.selectedAdvancedToolId == tool.id,
+                    onClick = { onAdvancedMathTool(tool.id) },
+                    label = { Text(tool.title) }
+                )
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { ElevatedAssistChip(onClick = {}, label = { Text("Parity ${state.advancedCapabilityReport.strengthScore}%") }) }
+            item { AssistChip(onClick = {}, label = { Text(state.compiledArExpression.kind.label) }) }
+            state.advancedCapabilityReport.supportedTools.take(5).forEach { tool ->
+                item { AssistChip(onClick = {}, label = { Text(tool.evidenceLabel) }) }
+            }
+        }
+        state.advancedCapabilityReport.missingWorkflowHints.take(3).forEach { hint ->
+            Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
         }
     }
 }
@@ -3332,7 +3375,11 @@ private fun ArFeaturePhase.features(): List<MathArFeature> = when (this) {
         MathArFeature.TangentNormalTool,
         MathArFeature.AreaUnderCurve,
         MathArFeature.VolumeBuilder,
-        MathArFeature.MultiObjectConstraints
+        MathArFeature.MultiObjectConstraints,
+        MathArFeature.ParametricGraphing,
+        MathArFeature.ImplicitRelations,
+        MathArFeature.LocusTrace,
+        MathArFeature.CasCommands
     )
     ArFeaturePhase.EngineStrengthening -> listOf(
         MathArFeature.CoordinateGridLocking,
@@ -3347,6 +3394,9 @@ private fun ArFeaturePhase.features(): List<MathArFeature> = when (this) {
         MathArFeature.EvidenceRecorder,
         MathArFeature.PrecisionConfidenceHud,
         MathArFeature.ScenePersistence
+    ) + listOf(
+        MathArFeature.ProofChecker,
+        MathArFeature.MacroTools
     )
 }
 
@@ -3369,6 +3419,12 @@ private fun MathArFeature.shortLabel(): String = when (this) {
     MathArFeature.GuidedWorkflow -> "Workflow"
     MathArFeature.ActivityExport -> "Activity"
     MathArFeature.EvidenceRecorder -> "Evidence"
+    MathArFeature.ParametricGraphing -> "Parametric"
+    MathArFeature.ImplicitRelations -> "Implicit"
+    MathArFeature.LocusTrace -> "Trace"
+    MathArFeature.ProofChecker -> "Proof"
+    MathArFeature.MacroTools -> "Macro"
+    MathArFeature.CasCommands -> "CAS"
 }
 
 private fun ArGestureHandle.shortLabel(): String = when (this) {
@@ -3894,6 +3950,12 @@ private fun MathArFeatureOverlay(state: ArViewerUiState) {
             add("Workflow ${state.workflowEvaluation.completionPercent}% | Ready ${state.workflowEvaluation.readinessScore}%")
         }
         if (state.exportedActivityPackage != null) add("Activity pack ready")
+        if (state.advancedCapabilityReport.strengthScore > 0) {
+            add("Advanced parity ${state.advancedCapabilityReport.strengthScore}%")
+        }
+        if (MathArFeature.ParametricGraphing in state.enabledMathArFeatures) add("Parametric trace")
+        if (MathArFeature.ImplicitRelations in state.enabledMathArFeatures) add("Implicit relation")
+        if (MathArFeature.ProofChecker in state.enabledMathArFeatures) add("Proof evidence")
         if (MathArFeature.MultiObjectConstraints in state.enabledMathArFeatures) {
             add("Construction ${state.constructionGeometry.points.size} pts | ${state.constructionGeometry.objects.size} objs")
             if (state.constructionGeometry.constraints.isNotEmpty()) add("Constraints ${state.constructionGeometry.constraints.size}")

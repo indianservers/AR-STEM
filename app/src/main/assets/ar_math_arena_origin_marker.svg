@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 2100 2970">
+  <rect width="2100" height="2970" fill="#ffffff"/>
+  <text x="1050" y="190" text-anchor="middle" font-family="Arial, sans-serif" font-size="86" font-weight="700" fill="#111111">AR Math Arena Origin</text>
+  <text x="1050" y="270" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" fill="#333333">Print marker width: 18 cm | Keep flat and well lit</text>
+  <g transform="translate(150,360)">
+    <rect x="0" y="0" width="1800" height="1800" fill="#ffffff" stroke="#000000" stroke-width="54"/>
+    <rect x="105" y="105" width="370" height="370" fill="#050505"/>
+    <rect x="1325" y="105" width="370" height="370" fill="#0f4a9c"/>
+    <circle cx="285" cy="1470" r="170" fill="#cd2626"/>
+    <circle cx="1510" cy="1470" r="126" fill="#050505"/>
+    <path d="M900 150 L1044 522 L940 480 L940 1060 L860 1060 L860 480 L756 522 Z" fill="#f8c528"/>
+    <g fill="#050505">
+      <rect x="620" y="230" width="38" height="180"/>
+      <rect x="730" y="365" width="38" height="236"/>
+      <rect x="840" y="250" width="38" height="292"/>
+      <rect x="950" y="405" width="38" height="192"/>
+      <rect x="1060" y="285" width="38" height="332"/>
+    </g>
+    <g fill="#0f4a9c">
+      <rect x="675" y="560" width="46" height="220"/>
+      <rect x="790" y="690" width="46" height="150"/>
+      <rect x="1015" y="600" width="46" height="285"/>
+      <rect x="1130" y="755" width="46" height="120"/>
+    </g>
+    <g stroke="#111111" stroke-width="18" fill="none">
+      <path d="M610 1120 C780 990 1030 1000 1200 1120"/>
+      <path d="M570 1215 C795 1090 1035 1105 1270 1220"/>
+      <path d="M520 1325 C815 1200 1110 1215 1380 1330"/>
+    </g>
+    <text x="900" y="1220" text-anchor="middle" font-family="Arial, sans-serif" font-size="86" font-weight="700" fill="#111111">Shared Origin</text>
+    <text x="900" y="1300" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" fill="#111111">+X right  |  +Y outward  |  +Z arrow forward</text>
+    <rect x="650" y="1475" width="500" height="215" fill="#edf1f7" stroke="#8892a0" stroke-width="8"/>
+    <text x="900" y="1595" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" fill="#222222">QR JOIN AREA</text>
+  </g>
+  <text x="1050" y="2305" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" fill="#222222">Use this printed marker as the shared classroom coordinate origin.</text>
+  <text x="1050" y="2370" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" fill="#333333">Do not fold, crop, cover, laminate with glare, or resize after printing.</text>
+</svg>

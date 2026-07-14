@@ -8,9 +8,12 @@ import com.indianservers.ai_stem.core.ar.GraphColorMap
 import com.indianservers.ai_stem.core.ar.OutdoorGeospatialFrameState
 import com.indianservers.ai_stem.core.ar.PaperGraphFrameState
 import com.indianservers.ai_stem.domain.graph.ArCompiledExpression
+import com.indianservers.ai_stem.domain.graph.ArAdvancedCapabilityReport
+import com.indianservers.ai_stem.domain.graph.ArAdvancedMathTools
 import com.indianservers.ai_stem.domain.graph.ArGraphDomain
 import com.indianservers.ai_stem.domain.graph.ArGraphAnalysisReport
 import com.indianservers.ai_stem.domain.graph.ArMathEngine
+import com.indianservers.ai_stem.domain.graph.GraphExpressionKind
 import com.indianservers.ai_stem.domain.graph.GraphQualityPreset
 import com.indianservers.ai_stem.domain.graph.GraphSlider
 import com.indianservers.ai_stem.domain.geometry.ConstructionGeometryState
@@ -74,7 +77,13 @@ enum class MathArFeature {
     CompareMode,
     GuidedWorkflow,
     ActivityExport,
-    EvidenceRecorder
+    EvidenceRecorder,
+    ParametricGraphing,
+    ImplicitRelations,
+    LocusTrace,
+    ProofChecker,
+    MacroTools,
+    CasCommands
 }
 enum class MathArExperience {
     MarkerlessObjects,
@@ -198,6 +207,14 @@ data class ArViewerUiState(
     val arGraphDomain: ArGraphDomain = ArGraphDomain(),
     val arGraphQualityPreset: GraphQualityPreset = GraphQualityPreset.Balanced,
     val arGraphSliders: List<GraphSlider> = emptyList(),
+    val advancedCapabilityReport: ArAdvancedCapabilityReport = ArAdvancedMathTools.evaluate(
+        equationKind = GraphExpressionKind.Explicit2D,
+        hasAnalysis = false,
+        constructionCount = 0,
+        pickedPointCount = 0,
+        exported = false
+    ),
+    val selectedAdvancedToolId: String? = null,
     val pickedPoints: List<ArPointLabel> = emptyList(),
     val pickedGraphPoints: List<ArPickedMathPoint> = emptyList(),
     val rulerAnchors: List<ArPointLabel> = emptyList(),

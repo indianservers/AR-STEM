@@ -6,6 +6,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.indianservers.ai_stem.core.designsystem.AiStemTheme
 import com.indianservers.ai_stem.feature.arviewer.ArViewerScreen
+import com.indianservers.ai_stem.feature.games.GamesLibraryScreen
+import com.indianservers.ai_stem.feature.games.matharena.ArMathArenaScreen
 import com.indianservers.ai_stem.feature.graphing.GraphingStudioScreen
 import com.indianservers.ai_stem.feature.labs.AlgebraLaboratoryScreen
 import com.indianservers.ai_stem.feature.labs.CalculusLaboratoryScreen
@@ -43,8 +45,26 @@ fun AiStemApp() {
                         navController.navigate(AppDestination.SolarSystem.route) {
                             launchSingleTop = true
                         }
+                    },
+                    onGames = {
+                        navController.navigate(AppDestination.Games.route) {
+                            launchSingleTop = true
+                        }
                     }
                 )
+            }
+            composable(AppDestination.Games.route) {
+                GamesLibraryScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenGame = {
+                        navController.navigate(AppDestination.ArMathArena.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+            composable(AppDestination.ArMathArena.route) {
+                ArMathArenaScreen(onBack = { navController.popBackStack() })
             }
             composable(AppDestination.Mathematics.route) {
                 MathematicsHomeScreen(

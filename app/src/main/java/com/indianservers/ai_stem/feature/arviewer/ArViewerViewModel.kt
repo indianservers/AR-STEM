@@ -23,6 +23,8 @@ import com.indianservers.ai_stem.data.scene.SceneStorageResult
 import com.indianservers.ai_stem.domain.mathematics.DefaultMathObjectRegistry
 import com.indianservers.ai_stem.domain.mathematics.MathObjectType
 import com.indianservers.ai_stem.domain.mathematics.MathParameterValue
+import com.indianservers.ai_stem.domain.graph.ArAdvancedMathTools
+import com.indianservers.ai_stem.domain.graph.ArAdvancedToolKind
 import com.indianservers.ai_stem.domain.graph.ArGraphDomain
 import com.indianservers.ai_stem.domain.graph.ArMathEngine
 import com.indianservers.ai_stem.domain.graph.GraphQualityPreset
@@ -567,6 +569,43 @@ class ArViewerViewModel : ViewModel() {
                 enabledMathArFeatures = it.enabledMathArFeatures + MathArFeature.TangentNormalTool,
                 userMessage = UiMessage("Tangent focus x=${"%.2f".format(x)}")
             )
+        }
+    }
+
+    fun applyAdvancedMathTool(toolId: String) {
+        val tool = ArAdvancedMathTools.tools.firstOrNull { it.id == toolId } ?: return
+        _uiState.update { state ->
+            val compiled = arMathEngine.compile(
+                source = tool.equationInsert,
+                existingSliders = state.arGraphSliders,
+                domain = state.arGraphDomain,
+                qualityPreset = state.arGraphQualityPreset
+            )
+            val comparison = arMathEngine.compile(
+                source = state.comparisonEquation,
+                existingSliders = compiled.parameters,
+                domain = state.arGraphDomain,
+                qualityPreset = state.arGraphQualityPreset
+            )
+            val analysis = arMathEngine.analyze(compiled, state.arGraphAnalysisFocusX, comparison)
+            val nextState = state.copy(
+                selectedAdvancedToolId = tool.id,
+                liveEquation = tool.equationInsert,
+                compiledArExpression = compiled,
+                compiledComparisonExpression = comparison,
+                arGraphAnalysis = analysis,
+                arGraphSliders = compiled.parameters,
+                selectedFeaturePhase = when (tool.kind) {
+                    ArAdvancedToolKind.MacroConstruction,
+                    ArAdvancedToolKind.ProofCheck -> ArFeaturePhase.EngineStrengthening
+                    else -> ArFeaturePhase.GraphAnalysis
+                },
+                enabledMathArFeatures = state.enabledMathArFeatures + tool.kind.features(),
+                graphAnimationEnabled = tool.kind in setOf(ArAdvancedToolKind.ParametricCurve, ArAdvancedToolKind.LocusTrace),
+                labelsVisible = true,
+                userMessage = UiMessage("${tool.title}: ${tool.arHint}")
+            )
+            nextState.copy(advancedCapabilityReport = nextState.advancedCapability())
         }
     }
 
@@ -1489,6 +1528,28 @@ private fun ArViewerUiState.workflowSignal(): ArWorkflowSignal =
         depthEnabled = depthOcclusionMode != ArDepthOcclusionMode.Off || depthOcclusionPolishEnabled
     )
 
+private fun ArViewerUiState.advancedCapability() =
+    ArAdvancedMathTools.evaluate(
+        equationKind = compiledArExpression.kind,
+        hasAnalysis = arGraphAnalysis.highlightedPoints.isNotEmpty() ||
+            arGraphAnalysis.tangent != null ||
+            arGraphAnalysis.integral != null,
+        constructionCount = constructionGeometry.objects.size,
+        pickedPointCount = pickedPoints.size + pickedGraphPoints.size,
+        exported = exportedScenePackage != null || exportedActivityPackage != null
+    )
+
+private fun ArAdvancedToolKind.features(): Set<MathArFeature> = when (this) {
+    ArAdvancedToolKind.ParametricCurve -> setOf(MathArFeature.ParametricGraphing, MathArFeature.LocusTrace, MathArFeature.PointPicker)
+    ArAdvancedToolKind.ImplicitRelation -> setOf(MathArFeature.ImplicitRelations, MathArFeature.RootVisualizer)
+    ArAdvancedToolKind.InequalityRegion -> setOf(MathArFeature.ImplicitRelations, MathArFeature.AreaUnderCurve)
+    ArAdvancedToolKind.LocusTrace -> setOf(MathArFeature.LocusTrace, MathArFeature.PointPicker)
+    ArAdvancedToolKind.MacroConstruction -> setOf(MathArFeature.MacroTools, MathArFeature.MultiObjectConstraints)
+    ArAdvancedToolKind.ProofCheck -> setOf(MathArFeature.ProofChecker, MathArFeature.EvidenceRecorder, MathArFeature.MultiObjectConstraints)
+    ArAdvancedToolKind.CasCommand -> setOf(MathArFeature.CasCommands, MathArFeature.TangentNormalTool, MathArFeature.AreaUnderCurve)
+    ArAdvancedToolKind.MultiGraphIntersection -> setOf(MathArFeature.RootVisualizer, MathArFeature.CompareMode)
+}
+
 private fun ArViewerUiState.productionSettings(): ArSceneProductionSettings =
     mathScene.arProductionSettings.copy(
         depthMode = depthOcclusionMode,
@@ -1610,6 +1671,12 @@ private fun MathArFeature.label(): String = when (this) {
     MathArFeature.GuidedWorkflow -> "Guided workflow"
     MathArFeature.ActivityExport -> "Activity export"
     MathArFeature.EvidenceRecorder -> "Evidence recorder"
+    MathArFeature.ParametricGraphing -> "Parametric graphing"
+    MathArFeature.ImplicitRelations -> "Implicit relations"
+    MathArFeature.LocusTrace -> "Locus trace"
+    MathArFeature.ProofChecker -> "Proof checker"
+    MathArFeature.MacroTools -> "Macro tools"
+    MathArFeature.CasCommands -> "CAS commands"
 }
 
 private fun equationValue(equation: String, x: Float): Float {
