@@ -70,6 +70,15 @@ object SceneMutations {
         return selectOnly(scene.copy(objects = scene.objects + objectState, updatedAt = System.currentTimeMillis()), objectState.id)
     }
 
+    fun addObject(scene: MathScene, definitionId: String, transform: ObjectTransform): MathScene {
+        val objectState = SceneObjectFactory.create(
+            definitionId = definitionId,
+            existingNames = scene.objects.map { it.displayName },
+            transform = transform
+        )
+        return selectOnly(scene.copy(objects = scene.objects + objectState, updatedAt = System.currentTimeMillis()), objectState.id)
+    }
+
     fun selectOnly(scene: MathScene, objectId: String?): MathScene =
         scene.copy(objects = scene.objects.map { it.copy(interactionState = it.interactionState.copy(selected = it.id == objectId)) })
 

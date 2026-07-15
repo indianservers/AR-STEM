@@ -34,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,6 +73,14 @@ fun MathematicsHomeScreen(
     onOpenGraphingStudio: () -> Unit,
     onOpenProjects: () -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        onOpenAr()
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("Opening Marker AR...")
+    }
+    return
+
     var selectedSection by remember { mutableStateOf(MathMenuSection.ArModes) }
     val features = selectedSection.features()
 

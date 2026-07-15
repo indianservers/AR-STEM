@@ -137,6 +137,9 @@ class ArMathEngine(
         return value.coerceFinite(compiled.domain.valueClamp)
     }
 
+    fun evaluate2dUnclamped(compiled: ArCompiledExpression, x: Double, phase: Double = 0.0): Double =
+        evaluate2dRaw(compiled, x, phase)
+
     fun evaluate3d(compiled: ArCompiledExpression, x: Double, y: Double, phase: Double = 0.0): Double {
         val value = evaluate3dRaw(compiled, x, y, phase)
         return value.coerceFinite(compiled.domain.valueClamp)
@@ -486,6 +489,26 @@ fun normalizeArFormula(source: String): String =
         .replace("²", "^2")
         .replace("³", "^3")
         .trim()
+        .normalizeStudentMathSyntax()
+
+private fun String.normalizeStudentMathSyntax(): String =
+    replace('−', '-')
+        .replace('–', '-')
+        .replace('×', '*')
+        .replace('·', '*')
+        .replace('÷', '/')
+        .replace("π", "pi")
+        .replace("θ", "theta")
+        .replace("²", "^2")
+        .replace("³", "^3")
+        .replace("ˣ", "^x")
+        .replace(Regex("""√\s*([A-Za-z0-9_.]+)"""), "sqrt($1)")
+        .replace(Regex("""\|([^|]+)\|"""), "abs($1)")
+        .insertImplicitMultiplication()
+
+private fun String.insertImplicitMultiplication(): String =
+    replace(Regex("""(?<=[0-9)])(?=[A-Za-z(])"""), "*")
+        .replace(Regex("""(?<=[A-Za-z)])(?=[0-9])"""), "*")
 
 private fun String.looksParametric2D(): Boolean {
     val normalized = lowercase().replace(" ", "")

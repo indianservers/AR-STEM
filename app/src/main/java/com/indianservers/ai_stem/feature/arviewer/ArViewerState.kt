@@ -58,7 +58,12 @@ enum class PaperGraphLayer { Axes, Scale, Graph, Surface3d, CrossSection }
 enum class FloatingMathTool { Axes, Grid, Labels, Formula, Measure, Slice, Animate, Capture }
 enum class GraphAnimationMode { RotateGraph, SweepArea, BuildVolume, MoveTangentPoint, AnimateSineWave }
 enum class Function3dTransformMode { Surface, Extrusion, SolidOfRevolution, TangentPlane, CrossSectionSlices }
+enum class MarkerMathActivity { Geometry2D, Geometry3D, FunctionGraph, CoordinateLab, Transformations, MeasurementLab, Trigonometry }
+enum class MarkerTransformationTool { Translation, Rotation, Reflection, Dilation, HorizontalStretch, VerticalStretch, Shear, Composite }
+enum class MarkerReflectionLine { XAxis, YAxis, YEqualsX, YEqualsNegativeX, UserLine }
+enum class MarkerGraphTraceMode { Off, Trace, Tangent, Integral }
 enum class ArFeaturePhase { DirectInteraction, GraphAnalysis, EngineStrengthening, WorkflowStudio }
+enum class MarkerLessonElementKind { Point, Line, Segment, Ray, Plane, Angle, Shape2d, Circle, Triangle, Transform, Algebra, Coordinate, FunctionGraph, Measurement2d, Solid3d }
 enum class MathArFeature {
     ObjectSnapping,
     GestureHandles,
@@ -117,6 +122,22 @@ data class PaperGraphCalibrationPoint(
     val worldZ: Float
 )
 
+data class MarkerGraphFunctionState(
+    val id: String,
+    val source: String,
+    val compiled: ArCompiledExpression,
+    val sliders: List<GraphSlider> = compiled.parameters,
+    val visible: Boolean = true,
+    val selected: Boolean = false,
+    val colorIndex: Int = 0
+) {
+    val displayName: String
+        get() = source.ifBlank { "Function" }
+
+    val isValid: Boolean
+        get() = compiled.isValid
+}
+
 data class ArPointLabel(
     val label: String,
     val x: Float,
@@ -133,12 +154,30 @@ data class PlacedMathObject(
     val transformRevision: Int = 0
 )
 
+data class MarkerLessonElement(
+    val id: String,
+    val label: String,
+    val kind: MarkerLessonElementKind,
+    val formula: String? = null
+)
+
+data class MarkerLessonInteractionState(
+    val zoom: Float = 1f,
+    val rotationDegrees: Float = 0f,
+    val expanded: Boolean = false,
+    val focusIndex: Int = 0,
+    val step: Int = 0,
+    val elements: List<MarkerLessonElement> = emptyList()
+) {
+    val focusedElement: MarkerLessonElement? get() = elements.getOrNull(focusIndex.coerceIn(0, (elements.size - 1).coerceAtLeast(0)))
+}
+
 data class ArViewerUiState(
     val availability: ArAvailabilityState = ArAvailabilityState.Checking,
     val permission: CameraPermissionState = CameraPermissionState.NotRequested,
     val locationPermission: LocationPermissionState = LocationPermissionState.NotRequested,
-    val arEngineMode: ArEngineMode = ArEngineMode.Indoor,
-    val mathArExperience: MathArExperience = MathArExperience.MarkerlessObjects,
+    val arEngineMode: ArEngineMode = ArEngineMode.PaperGraph,
+    val mathArExperience: MathArExperience = MathArExperience.MarkerBasedGraph,
     val sessionStatus: ArSessionStatus = ArSessionStatus.Initializing,
     val trackingStatus: TrackingStatus = TrackingStatus.Unknown,
     val anchorTrackingStatus: TrackingStatus = TrackingStatus.Unknown,
@@ -168,6 +207,23 @@ data class ArViewerUiState(
     val hasValidPlacementHit: Boolean = false,
     val placementHitKind: PlacementHitKind = PlacementHitKind.None,
     val paperGraph: PaperGraphFrameState? = null,
+    val activeMarkerLessonId: String? = null,
+    val markerLessonTitle: String = "",
+    val markerLessonSubtitle: String = "",
+    val markerLessonInteraction: MarkerLessonInteractionState = MarkerLessonInteractionState(),
+    val markerMathActivity: MarkerMathActivity = MarkerMathActivity.Geometry2D,
+    val markerTransformTool: MarkerTransformationTool = MarkerTransformationTool.Translation,
+    val markerTransformProgress: Float = 1f,
+    val markerTranslationX: Float = 0.16f,
+    val markerTranslationY: Float = 0.1f,
+    val markerRotationDegrees: Float = 45f,
+    val markerRotationClockwise: Boolean = false,
+    val markerReflectionLine: MarkerReflectionLine = MarkerReflectionLine.YAxis,
+    val markerDilationScale: Float = 1.4f,
+    val markerHorizontalStretch: Float = 1.4f,
+    val markerVerticalStretch: Float = 0.7f,
+    val markerShear: Float = 0.45f,
+    val markerTrigAngleDegrees: Float = 30f,
     val paperGraphCalibration: PaperGraphCalibrationState = PaperGraphCalibrationState(),
     val paperGraphLayers: Set<PaperGraphLayer> = setOf(
         PaperGraphLayer.Axes,
@@ -179,10 +235,10 @@ data class ArViewerUiState(
     val activeFloatingTool: FloatingMathTool = FloatingMathTool.Axes,
     val axesVisible: Boolean = true,
     val gridVisible: Boolean = true,
-    val labelsVisible: Boolean = true,
-    val formulaCardsVisible: Boolean = true,
+    val labelsVisible: Boolean = false,
+    val formulaCardsVisible: Boolean = false,
     val formulaCardsCollapsed: Boolean = false,
-    val measurementsVisible: Boolean = true,
+    val measurementsVisible: Boolean = false,
     val slicePlaneVisible: Boolean = false,
     val graphAnimationEnabled: Boolean = false,
     val graphAnimationProgress: Float = 0f,
@@ -207,6 +263,17 @@ data class ArViewerUiState(
     val arGraphDomain: ArGraphDomain = ArGraphDomain(),
     val arGraphQualityPreset: GraphQualityPreset = GraphQualityPreset.Balanced,
     val arGraphSliders: List<GraphSlider> = emptyList(),
+    val markerGraphFunctions: List<MarkerGraphFunctionState> = emptyList(),
+    val selectedMarkerGraphFunctionId: String? = null,
+    val markerGraphTraceMode: MarkerGraphTraceMode = MarkerGraphTraceMode.Off,
+    val markerGraphTraceProgress: Float = 0.5f,
+    val markerGraphShowGrid: Boolean = true,
+    val markerGraphShowLabels: Boolean = true,
+    val markerGraphShowIntercepts: Boolean = true,
+    val markerGraphShowExtrema: Boolean = false,
+    val markerGraphShowDiscontinuities: Boolean = true,
+    val markerGraphShowDerivative: Boolean = false,
+    val markerGraphShowIntegralArea: Boolean = false,
     val advancedCapabilityReport: ArAdvancedCapabilityReport = ArAdvancedMathTools.evaluate(
         equationKind = GraphExpressionKind.Explicit2D,
         hasAnalysis = false,

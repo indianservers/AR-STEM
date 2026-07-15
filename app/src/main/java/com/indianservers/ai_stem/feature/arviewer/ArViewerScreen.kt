@@ -3,6 +3,7 @@ package com.indianservers.ai_stem.feature.arviewer
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.media.Image
 import android.net.Uri
 import android.os.SystemClock
@@ -12,9 +13,12 @@ import android.view.MotionEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +37,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -89,9 +94,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as DrawSize
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -100,13 +108,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.BaselineShift
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.filament.MaterialInstance
 import com.google.ar.core.Anchor
+import com.google.ar.core.AugmentedImage
 import com.google.ar.core.Config
 import com.google.ar.core.Coordinates2d
 import com.google.ar.core.DepthPoint
@@ -131,6 +145,12 @@ import com.indianservers.ai_stem.core.ar.ArSensorFusionEngine
 import com.indianservers.ai_stem.core.ar.ArSensorFusionInput
 import com.indianservers.ai_stem.core.ar.ArSensorFusionResult
 import com.indianservers.ai_stem.core.ar.ArSceneUnderstandingSample
+import com.indianservers.ai_stem.core.ar.CommonArCoreSurfaceDetector
+import com.indianservers.ai_stem.core.ar.CommonArSurfaceEngine
+import com.indianservers.ai_stem.core.ar.CommonArSurfaceHitKind
+import com.indianservers.ai_stem.core.ar.CommonArSurfaceMode
+import com.indianservers.ai_stem.core.ar.CommonArSurfaceQuality
+import com.indianservers.ai_stem.core.ar.CommonArSurfaceState
 import com.indianservers.ai_stem.core.ar.NativeArSensorMonitor
 import com.indianservers.ai_stem.core.ar.NativeArSensorSample
 import com.indianservers.ai_stem.core.ar.OutdoorGeospatialArEngine
@@ -148,6 +168,7 @@ import com.indianservers.ai_stem.domain.mathematics.DefaultMathObjectRegistry
 import com.indianservers.ai_stem.domain.mathematics.MeasurementFormatter
 import com.indianservers.ai_stem.domain.mathematics.parameterNumber
 import com.indianservers.ai_stem.domain.graph.ArMathEngine
+import com.indianservers.ai_stem.domain.graph.ArCompiledExpression
 import com.indianservers.ai_stem.domain.graph.ArAdvancedMathTools
 import com.indianservers.ai_stem.domain.graph.ArGraphDomain
 import com.indianservers.ai_stem.domain.graph.GraphExpressionKind
@@ -184,11 +205,14 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val AR_LOG_TAG = "AiStemAR"
 private const val RETICLE_HIT_TEST_INTERVAL_NANOS = 250_000_000L
+private const val MARKER_STATUS_UPDATE_FRAME_INTERVAL = 15
 private const val MIN_STABLE_PLANE_FRAMES = 8
 private const val MIN_PLANE_EXTENT_METERS = 0.18f
 
@@ -430,7 +454,40 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
                             anchor?.detach()
                             anchor = null
                             viewModel.clearScene()
-                        }
+                        },
+                        onMarkerZoom = viewModel::zoomMarkerLesson,
+                        onMarkerRotate = viewModel::rotateMarkerLesson,
+                        onMarkerExpand = viewModel::toggleMarkerLessonExpanded,
+                        onMarkerNext = viewModel::focusNextMarkerLessonElement,
+                        onMarkerReset = viewModel::resetMarkerLessonInteraction,
+                        onMarkerActivity = viewModel::selectMarkerMathActivity,
+                        onMarker2dShape = viewModel::addMarker2dShape,
+                        onMarker3dObject = viewModel::addMarker3dObject,
+                        onMarkerTransformationTool = viewModel::selectMarkerTransformationTool,
+                        onMarkerTransformProgress = viewModel::setMarkerTransformProgress,
+                        onMarkerTranslationX = viewModel::setMarkerTranslationX,
+                        onMarkerTranslationY = viewModel::setMarkerTranslationY,
+                        onMarkerRotationDegrees = viewModel::setMarkerRotationDegrees,
+                        onMarkerRotationDirection = viewModel::toggleMarkerRotationDirection,
+                        onMarkerReflectionLine = viewModel::setMarkerReflectionLine,
+                        onMarkerDilationScale = viewModel::setMarkerDilationScale,
+                        onMarkerHorizontalStretch = viewModel::setMarkerHorizontalStretch,
+                        onMarkerVerticalStretch = viewModel::setMarkerVerticalStretch,
+                        onMarkerShear = viewModel::setMarkerShear,
+                        onUndoMarkerTransformation = viewModel::undoMarkerTransformation,
+                        onMarkerTrigAngle = viewModel::setMarkerTrigAngle,
+                        onAddMarkerGraphFunction = viewModel::addMarkerGraphFunction,
+                        onSelectMarkerGraphFunction = viewModel::selectMarkerGraphFunction,
+                        onToggleSelectedMarkerGraphVisibility = viewModel::toggleSelectedMarkerGraphVisibility,
+                        onDeleteSelectedMarkerGraphFunction = viewModel::deleteSelectedMarkerGraphFunction,
+                        onDuplicateSelectedMarkerGraphFunction = viewModel::duplicateSelectedMarkerGraphFunction,
+                        onMarkerGraphParameter = viewModel::updateSelectedMarkerGraphParameter,
+                        onMarkerGraphTrace = viewModel::toggleMarkerGraphTrace,
+                        onMarkerGraphTraceProgress = viewModel::setMarkerGraphTraceProgress,
+                        onMarkerGraphZoom = viewModel::zoomMarkerGraph,
+                        onMarkerGraphPan = viewModel::panMarkerGraph,
+                        onMarkerGraphFit = viewModel::fitMarkerGraphView,
+                        onClearMarkerWorkspace = viewModel::clearMarkerWorkspace
                     )
                     AnimatedVisibility(visible = moving, modifier = Modifier.align(Alignment.Center)) {
                         Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.tertiaryContainer) {
@@ -509,13 +566,13 @@ private fun ArRuntime(
     onRuntimeError: (String, Throwable) -> Unit
 ) {
     val context = LocalContext.current
-    var latestFrame by remember { mutableStateOf<Frame?>(null) }
+    val latestFrameRef = remember { arrayOfNulls<Frame>(1) }
     var viewportWidth by remember { mutableStateOf(0) }
     var viewportHeight by remember { mutableStateOf(0) }
     var runtimeBlocked by remember { mutableStateOf(false) }
-    var frameCounter by remember { mutableStateOf(0) }
-    var lastReticleHitTestTimestamp by remember { mutableStateOf(0L) }
-    var lastReticleHitKind by remember { mutableStateOf(PlacementHitKind.None) }
+    val frameCounter = remember { intArrayOf(0) }
+    val lastReticleHitTestTimestamp = remember { longArrayOf(0L) }
+    val lastReticleHitKind = remember { arrayOf(PlacementHitKind.None) }
     var nativeSensorSample by remember { mutableStateOf<NativeArSensorSample?>(null) }
     var nativeSensorReceivedAtMs by remember { mutableStateOf(0L) }
     var semanticsSupported by remember { mutableStateOf(false) }
@@ -525,6 +582,10 @@ private fun ArRuntime(
     var lastOutdoorGeometryHit by remember { mutableStateOf<HitResult?>(null) }
     var outdoorMeshAnchor by remember { mutableStateOf<Anchor?>(null) }
     var outdoorWireframeEdges by remember { mutableStateOf<List<OutdoorWireframeEdge>>(emptyList()) }
+    val latestLockedMarkerImage = remember { arrayOfNulls<AugmentedImage>(1) }
+    val anchoredMarkerId = remember { arrayOfNulls<String>(1) }
+    val markerLostFrames = remember { intArrayOf(0) }
+    val markerStableFrames = remember { intArrayOf(0) }
     val outdoorMode = state.arEngineMode == ArEngineMode.OutdoorGeospatialMath
     val paperGraphMode = state.arEngineMode == ArEngineMode.PaperGraph
     val stablePlaneFrames = remember { mutableMapOf<Int, Int>() }
@@ -544,6 +605,7 @@ private fun ArRuntime(
     }
     val poseSamples = remember { ArrayDeque<ArPoseSample>() }
     val fusionEngine = remember { ArSensorFusionEngine() }
+    val commonSurfaceDetector = remember { CommonArCoreSurfaceDetector() }
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
     val materialLoader = rememberMaterialLoader(engine)
@@ -601,7 +663,7 @@ private fun ArRuntime(
             modelLoader = modelLoader,
             materialLoader = materialLoader,
             lifecycle = arLifecycleOwner.lifecycle,
-            planeRenderer = state.planesVisible,
+            planeRenderer = state.planesVisible && !state.isQuietMarkerMode(),
             onSessionCreated = {
                 Log.d(AR_LOG_TAG, "AR session created")
             },
@@ -618,28 +680,20 @@ private fun ArRuntime(
             },
             sessionConfiguration = { session: Session, config: Config ->
                 runCatching {
-                    config.planeFindingMode = when (state.arEngineMode) {
-                        ArEngineMode.SurfacePlacement -> Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-                        ArEngineMode.OutdoorGeospatialMath -> Config.PlaneFindingMode.DISABLED
-                        ArEngineMode.PaperGraph -> Config.PlaneFindingMode.HORIZONTAL
-                        else -> Config.PlaneFindingMode.HORIZONTAL
-                    }
-                    config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
-                    config.focusMode = Config.FocusMode.AUTO
-                    config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                    config.instantPlacementMode = if (state.arEngineMode == ArEngineMode.SurfacePlacement || outdoorMode) {
-                        Config.InstantPlacementMode.DISABLED
-                    } else {
-                        Config.InstantPlacementMode.LOCAL_Y_UP
-                    }
                     depthSupported = runCatching { session.isDepthModeSupported(Config.DepthMode.AUTOMATIC) }.getOrDefault(false)
-                    depthEnabled = depthSupported
-                    config.depthMode = if (depthEnabled) Config.DepthMode.AUTOMATIC else Config.DepthMode.DISABLED
+                    CommonArSurfaceEngine.configureSession(
+                        session = session,
+                        config = config,
+                        mode = state.arEngineMode.toCommonSurfaceMode(),
+                        preferDepth = depthSupported,
+                        instantPreview = state.arEngineMode == ArEngineMode.AirPlacement
+                    )
+                    depthEnabled = config.depthMode == Config.DepthMode.AUTOMATIC
                     val outdoorConfig = OutdoorGeospatialArEngine.configureSession(session, config, outdoorMode)
-                    val paperConfig = AugmentedImageArEngine.configureSession(session, config, paperGraphMode)
+                    val paperConfig = AugmentedImageArEngine.configureSession(context, session, config, paperGraphMode)
                     depthEnabled = if (outdoorConfig.enabled) outdoorConfig.geospatialDepthEnabled else depthEnabled
-                    semanticsSupported = runCatching { session.isSemanticModeSupported(Config.SemanticMode.ENABLED) }.getOrDefault(false)
-                    semanticsEnabled = semanticsSupported
+                    semanticsSupported = !paperGraphMode && runCatching { session.isSemanticModeSupported(Config.SemanticMode.ENABLED) }.getOrDefault(false)
+                    semanticsEnabled = semanticsSupported && !paperGraphMode
                     config.semanticMode = if (semanticsEnabled) Config.SemanticMode.ENABLED else Config.SemanticMode.DISABLED
                     Log.d(
                         AR_LOG_TAG,
@@ -656,52 +710,104 @@ private fun ArRuntime(
             },
             onSessionUpdated = { session, frame ->
                 runCatching {
-                    latestFrame = frame
-                    frameCounter += 1
+                    latestFrameRef[0] = frame
+                    frameCounter[0] += 1
                     val cameraStatus = frame.camera.trackingState.toTrackingStatus()
                     val anchorStatus = anchor?.trackingState.toTrackingStatus()
-                    val surfaceState = observeStableSurfaces(session, stablePlaneFrames)
                     if (outdoorMode) {
                         OutdoorGeospatialArEngine.observeFrame(session, frame, lastOutdoorGeometryHit).also(onOutdoorGeospatialFrame)
                     }
                     if (paperGraphMode) {
-                        AugmentedImageArEngine.observeFrame(frame).also(onPaperGraphFrame)
+                        val updatedMarkerIndexes = frame.getUpdatedTrackables(AugmentedImage::class.java)
+                            .map { it.index }
+                            .toSet()
+                        val shouldPublishMarkerFrame = updatedMarkerIndexes.isNotEmpty() ||
+                            frameCounter[0] % MARKER_STATUS_UPDATE_FRAME_INTERVAL == 0
+                        if (shouldPublishMarkerFrame) {
+                            AugmentedImageArEngine.observeFrame(session, frame).also(onPaperGraphFrame)
+                        }
+                        val lockedImage = session.getAllTrackables(AugmentedImage::class.java)
+                            .filter { image ->
+                                image.trackingState == TrackingState.TRACKING &&
+                                    image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+                            }
+                            .sortedWith(
+                                compareByDescending<AugmentedImage> { it.index in updatedMarkerIndexes }
+                                    .thenByDescending { it.extentX.coerceAtLeast(0f) * it.extentZ.coerceAtLeast(0f) }
+                                    .thenBy { it.index }
+                            )
+                            .firstOrNull()
+                        latestLockedMarkerImage[0] = lockedImage
+                        lockedImage?.let { image ->
+                            val markerId = image.name.orEmpty().extractArMarkerId()
+                            if (markerId != null) {
+                                markerLostFrames[0] = 0
+                                markerStableFrames[0] += 1
+                                if (anchor == null || markerId != anchoredMarkerId[0]) {
+                                    if (markerId != anchoredMarkerId[0]) {
+                                        Log.d(AR_LOG_TAG, "Switching marker anchor previous=${anchoredMarkerId[0]} next=$markerId image=${image.name}")
+                                        anchor?.detach()
+                                    } else {
+                                        Log.d(AR_LOG_TAG, "Restoring marker anchor marker=$markerId image=${image.name}")
+                                    }
+                                    anchoredMarkerId[0] = markerId
+                                    onAnchorChanged(image.createAnchor(image.centerPose))
+                                }
+                            }
+                        } ?: run {
+                            markerLostFrames[0] += 1
+                            markerStableFrames[0] = 0
+                        }
+                    } else {
+                        latestLockedMarkerImage[0] = null
+                        anchoredMarkerId[0] = null
+                        markerLostFrames[0] = 0
+                        markerStableFrames[0] = 0
                     }
-                    val shouldProbeReticle = viewportWidth > 0 &&
+                    val shouldProbeReticle = !paperGraphMode &&
+                        viewportWidth > 0 &&
                         viewportHeight > 0 &&
                         frame.camera.trackingState == TrackingState.TRACKING &&
-                        frame.timestamp - lastReticleHitTestTimestamp > RETICLE_HIT_TEST_INTERVAL_NANOS
+                        frame.timestamp - lastReticleHitTestTimestamp[0] > RETICLE_HIT_TEST_INTERVAL_NANOS
                     if (shouldProbeReticle) {
-                        val centerHit = findBestPlacementHit(
+                        val commonSurface = commonSurfaceDetector.observe(
                             frame = frame,
-                            x = viewportWidth / 2f,
-                            y = viewportHeight / 2f,
-                            mode = state.arEngineMode,
-                            allowFeaturePoint = true,
-                            allowInstant = true
+                            screenX = viewportWidth / 2f,
+                            screenY = viewportHeight / 2f,
+                            mode = state.arEngineMode.toCommonSurfaceMode()
                         )
-                        lastReticleHitKind = centerHit?.placementHitKind ?: PlacementHitKind.None
-                        lastReticleHitTestTimestamp = frame.timestamp
+                        lastReticleHitKind[0] = commonSurface.toPlacementHitKind()
+                        lastReticleHitTestTimestamp[0] = frame.timestamp
                     } else if (frame.camera.trackingState != TrackingState.TRACKING) {
-                        lastReticleHitKind = PlacementHitKind.None
+                        lastReticleHitKind[0] = PlacementHitKind.None
                     } else {
-                        lastReticleHitKind
+                        lastReticleHitKind[0]
                     }
-                    val hitKind = lastReticleHitKind
+                    val hitKind = if (paperGraphMode) PlacementHitKind.None else lastReticleHitKind[0]
                     val pose = frame.camera.pose
                     poseSamples.addLast(ArPoseSample(pose.tx(), pose.ty(), pose.tz(), frame.timestamp))
                     while (poseSamples.size > 18) poseSamples.removeFirst()
                     val agedNativeSensorSample = nativeSensorSample?.copy(
                         sensorAgeMillis = (SystemClock.elapsedRealtime() - nativeSensorReceivedAtMs).coerceAtLeast(0L)
                     )
-                    val sceneUnderstanding = frame.readSceneUnderstanding(
-                        semanticsSupported = semanticsSupported,
-                        semanticsEnabled = semanticsEnabled,
-                        depthSupported = depthSupported,
-                        depthEnabled = depthEnabled,
-                        viewportWidth = viewportWidth,
-                        viewportHeight = viewportHeight
-                    )
+                    val sceneUnderstanding = if (paperGraphMode) {
+                        ArSceneUnderstandingSample(
+                            semanticsSupported = false,
+                            semanticsEnabled = false,
+                            semanticsAvailable = false,
+                            depthSupported = false,
+                            depthEnabled = false
+                        )
+                    } else {
+                        frame.readSceneUnderstanding(
+                            semanticsSupported = semanticsSupported,
+                            semanticsEnabled = semanticsEnabled,
+                            depthSupported = depthSupported,
+                            depthEnabled = depthEnabled,
+                            viewportWidth = viewportWidth,
+                            viewportHeight = viewportHeight
+                        )
+                    }
                     val fusion = fusionEngine.evaluate(
                         ArSensorFusionInput(
                             cameraTracking = cameraStatus,
@@ -716,10 +822,10 @@ private fun ArRuntime(
                             hasPlacedObject = state.mathScene.objects.isNotEmpty()
                         )
                     )
-                    if (frameCounter % 30 == 0) {
+                    if (frameCounter[0] % 30 == 0) {
                         Log.d(
                             AR_LOG_TAG,
-                            "Frame camera=$cameraStatus anchor=$anchorStatus hit=$hitKind score=${fusion.score} planes=${surfaceState.candidatePlaneCount} stable=${surfaceState.stablePlaneCount} native=${agedNativeSensorSample?.compactLog()} scene=${sceneUnderstanding.compactLog()}"
+                            "Frame camera=$cameraStatus anchor=$anchorStatus hit=$hitKind score=${fusion.score} native=${agedNativeSensorSample?.compactLog()} scene=${sceneUnderstanding.compactLog()}"
                         )
                     }
                     onPlaneStatus(hitKind != PlacementHitKind.None, hitKind)
@@ -734,18 +840,27 @@ private fun ArRuntime(
                 onSingleTapConfirmed = { event: MotionEvent, _ ->
                     runCatching {
                         Log.d(AR_LOG_TAG, "Tap x=${event.x} y=${event.y} moving=$moving hasAnchor=${anchor != null} delay=${state.shouldDelayPlacement}")
-                        val frame = latestFrame
+                        val frame = latestFrameRef[0]
                         if (frame == null) {
                             Log.w(AR_LOG_TAG, "Tap ignored because latest AR frame is null")
                             return@rememberOnGestureListener
+                        }
+                        if (paperGraphMode && anchor == null) {
+                            val image = latestLockedMarkerImage[0] ?: frame.findLockedMarkerImage()
+                            if (image != null) {
+                                Log.d(AR_LOG_TAG, "Creating marker anchor from image=${image.name}")
+                                anchoredMarkerId[0] = image.name.orEmpty().extractArMarkerId()
+                                onAnchorChanged(image.createAnchor(image.centerPose))
+                                return@rememberOnGestureListener
+                            }
                         }
                         val hit = findBestPlacementHit(
                             frame = frame,
                             x = event.x,
                             y = event.y,
                             mode = state.arEngineMode,
-                            allowFeaturePoint = true,
-                            allowInstant = true
+                            allowFeaturePoint = state.arEngineMode == ArEngineMode.AirPlacement,
+                            allowInstant = state.arEngineMode == ArEngineMode.AirPlacement
                         )?.hit
                         if (anchor != null && !moving) {
                             val pose = hit?.hitPose ?: frame.camera.pose
@@ -792,7 +907,7 @@ private fun ArRuntime(
                             hit.hitPose.let { pose -> onPlacementPoint(pose.tx(), pose.ty(), pose.tz()) }
                             onAnchorChanged(hit.createAnchor())
                         } else {
-                            Log.d(AR_LOG_TAG, "Tap missed all placement hits")
+                            Log.d(AR_LOG_TAG, "Tap missed all placement hits mode=${state.arEngineMode}")
                             onPlacementMissed()
                         }
                     }.onFailure {
@@ -804,7 +919,46 @@ private fun ArRuntime(
         ) {
             anchor?.let {
                 AnchorNode(anchor = it) {
-                    state.mathScene.objects.filter { objectState -> objectState.visibility.visible }.forEach { objectState ->
+                    if (state.isQuietMarkerMode() && state.markerMathActivity == MarkerMathActivity.FunctionGraph) {
+                        val interaction = state.markerLessonInteraction
+                        Node(
+                            rotation = Rotation(y = interaction.rotationDegrees),
+                            scale = Scale(interaction.zoom * if (interaction.expanded) 1.35f else 1f)
+                        ) {
+                            MarkerGraphWorkspaceNode(materialLoader, state)
+                        }
+                    }
+                    if (state.isQuietMarkerMode() && state.markerMathActivity == MarkerMathActivity.Transformations) {
+                        val interaction = state.markerLessonInteraction
+                        Node(
+                            rotation = Rotation(y = interaction.rotationDegrees),
+                            scale = Scale(interaction.zoom * if (interaction.expanded) 1.35f else 1f)
+                        ) {
+                            MarkerTransformationWorkspaceNode(materialLoader, state)
+                        }
+                    }
+                    if (state.isQuietMarkerMode() && state.markerMathActivity == MarkerMathActivity.Trigonometry) {
+                        val interaction = state.markerLessonInteraction
+                        Node(
+                            rotation = Rotation(y = interaction.rotationDegrees),
+                            scale = Scale(interaction.zoom * if (interaction.expanded) 1.35f else 1f)
+                        ) {
+                            MarkerTrigonometryWorkspaceNode(materialLoader, state)
+                        }
+                    }
+                    if (state.isQuietMarkerMode() && state.markerMathActivity == MarkerMathActivity.MeasurementLab) {
+                        val interaction = state.markerLessonInteraction
+                        Node(
+                            rotation = Rotation(y = interaction.rotationDegrees),
+                            scale = Scale(interaction.zoom * if (interaction.expanded) 1.35f else 1f)
+                        ) {
+                            MarkerMeasurementWorkspaceNode(materialLoader, state)
+                        }
+                    }
+                    state.mathScene.objects
+                        .filter { objectState -> objectState.visibility.visible }
+                        .filterNot { objectState -> state.isQuietMarkerMode() && state.markerMathActivity == MarkerMathActivity.FunctionGraph && objectState.objectType == MathObjectType.SineCurve }
+                        .forEach { objectState ->
                         key(objectState.id, objectState.updatedAt) {
                             Node(
                                 position = Position(
@@ -824,8 +978,8 @@ private fun ArRuntime(
                                 isEditable = !objectState.interactionState.locked
                             ) {
                                 MathObjectNode(objectState.objectType, materialLoader, state)
-                                if (objectState.interactionState.selected) SelectionHighlight(materialLoader)
-                                if (objectState.interactionState.selected && MathArFeature.GestureHandles in state.enabledMathArFeatures) {
+                                if (objectState.interactionState.selected && !state.isQuietMarkerMode()) SelectionHighlight(materialLoader)
+                                if (objectState.interactionState.selected && !state.isQuietMarkerMode() && MathArFeature.GestureHandles in state.enabledMathArFeatures) {
                                     GestureHandleNodes(materialLoader)
                                 }
                                 if (objectState.interactionState.selected && state.compareModeEnabled) {
@@ -834,7 +988,24 @@ private fun ArRuntime(
                             }
                         }
                     }
-                    ConstructionGeometryNodes(state, materialLoader)
+                    if (state.isQuietMarkerMode() && state.markerMathActivity !in setOf(
+                            MarkerMathActivity.FunctionGraph,
+                            MarkerMathActivity.Transformations,
+                            MarkerMathActivity.Trigonometry,
+                            MarkerMathActivity.MeasurementLab
+                        )
+                    ) {
+                        val interaction = state.markerLessonInteraction
+                        val scale = interaction.zoom * if (interaction.expanded) 1.55f else 1f
+                        Node(
+                            rotation = Rotation(y = interaction.rotationDegrees),
+                            scale = Scale(scale)
+                        ) {
+                            ConstructionGeometryNodes(state, materialLoader)
+                        }
+                    } else if (!state.isQuietMarkerMode()) {
+                        ConstructionGeometryNodes(state, materialLoader)
+                    }
                 }
             }
             outdoorMeshAnchor?.let { meshAnchor ->
@@ -843,9 +1014,11 @@ private fun ArRuntime(
                 }
             }
         }
-        Reticle(state)
-        TrackingHealthOverlay(state)
-        MathInteractionOverlay(state)
+        if (!state.isQuietMarkerMode()) {
+            Reticle(state)
+            TrackingHealthOverlay(state)
+            MathInteractionOverlay(state)
+        }
     }
 }
 
@@ -884,6 +1057,364 @@ private fun NodeScope.MathObjectNode(type: MathObjectType, materialLoader: Mater
 
 private fun MathObjectType.isGraphLike(): Boolean =
     this in setOf(MathObjectType.SineCurve, MathObjectType.CoordinatePlane, MathObjectType.NumberLine, MathObjectType.VectorArrow)
+
+@Composable
+private fun NodeScope.MarkerGraphWorkspaceNode(
+    materialLoader: MaterialLoader,
+    state: ArViewerUiState
+) {
+    val axis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color.White.copy(alpha = 0.92f)) }
+    val gridMinor = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF70E6FF).copy(alpha = 0.24f)) }
+    val gridMajor = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFB88CFF).copy(alpha = 0.42f)) }
+    val zAxis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFEDE7FF)) }
+    val origin = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF5CFFF0)) }
+    val palette = remember(materialLoader, state.graphColorMap) {
+        listOf(
+            Color(0xFF4D5CFF),
+            Color(0xFF8F5CFF),
+            Color(0xFF46D7FF),
+            Color(0xFF63F2C6),
+            Color(0xFFFF7BCB)
+        ).map { materialLoader.createUnlitColorInstance(it) }
+    }
+    MarkerGraphBaseGrid(axis, gridMinor, gridMajor, zAxis, origin)
+    state.markerGraphFunctions
+        .filter { it.visible && it.isValid }
+        .forEach { graph ->
+            if (graph.compiled.kind == GraphExpressionKind.ExplicitSurface3D) {
+                MarkerSurfaceGraph(graph.compiled, palette, axis)
+            } else {
+                MarkerCurveGraph(graph, state, palette, axis)
+            }
+        }
+    state.markerGraphFunctions.firstOrNull { it.selected && it.visible && it.isValid }?.let { graph ->
+        MarkerGraphTraceNode(graph, state, axis, origin)
+    }
+}
+
+@Composable
+private fun NodeScope.MarkerGraphBaseGrid(
+    axis: MaterialInstance,
+    gridMinor: MaterialInstance,
+    gridMajor: MaterialInstance,
+    zAxis: MaterialInstance,
+    origin: MaterialInstance
+) {
+    val half = 0.28f
+    (-8..8).forEach { i ->
+        val p = i * (half / 8f)
+        val material = if (i % 4 == 0) gridMajor else gridMinor
+        LineNode(Position(-half, 0.004f, p), Position(half, 0.004f, p), material)
+        LineNode(Position(p, 0.004f, -half), Position(p, 0.004f, half), material)
+    }
+    LineNode(Position(-0.32f, 0.012f, 0f), Position(0.32f, 0.012f, 0f), axis)
+    LineNode(Position(0f, 0.012f, -0.32f), Position(0f, 0.012f, 0.32f), axis)
+    LineNode(Position(0f, 0.012f, 0f), Position(0f, 0.42f, 0f), zAxis)
+    LineNode(Position(0.32f, 0.012f, 0f), Position(0.285f, 0.012f, 0.018f), axis)
+    LineNode(Position(0.32f, 0.012f, 0f), Position(0.285f, 0.012f, -0.018f), axis)
+    LineNode(Position(0f, 0.012f, 0.32f), Position(0.018f, 0.012f, 0.285f), axis)
+    LineNode(Position(0f, 0.012f, 0.32f), Position(-0.018f, 0.012f, 0.285f), axis)
+    LineNode(Position(0f, 0.42f, 0f), Position(0.018f, 0.38f, 0f), zAxis)
+    LineNode(Position(0f, 0.42f, 0f), Position(-0.018f, 0.38f, 0f), zAxis)
+    (-2..2).forEach { tick ->
+        val p = tick * 0.12f
+        LineNode(Position(p, 0.018f, -0.014f), Position(p, 0.018f, 0.014f), axis)
+        LineNode(Position(-0.014f, 0.018f, p), Position(0.014f, 0.018f, p), axis)
+        if (tick != 0) {
+            CubeNode(Size(0.012f, 0.012f, 0.012f), center = Position(p, 0.022f, 0f), materialInstance = gridMajor)
+            CubeNode(Size(0.012f, 0.012f, 0.012f), center = Position(0f, 0.022f, p), materialInstance = gridMajor)
+        }
+    }
+    CubeNode(Size(0.024f, 0.024f, 0.024f), center = Position(0f, 0.024f, 0f), materialInstance = origin)
+}
+
+@Composable
+private fun NodeScope.MarkerSurfaceGraph(
+    compiled: ArCompiledExpression,
+    palette: List<MaterialInstance>,
+    accent: MaterialInstance
+) {
+    val samples = (-8..8).map { it / 4f }
+    samples.forEachIndexed { row, y ->
+        samples.zipWithNext().forEachIndexed { col, (x0, x1) ->
+            val p0 = markerSurfacePoint(compiled, x0, y)
+            val p1 = markerSurfacePoint(compiled, x1, y)
+            LineNode(p0, p1, palette[(row + col).floorMod(palette.size)])
+        }
+    }
+    samples.forEachIndexed { col, x ->
+        samples.zipWithNext().forEachIndexed { row, (y0, y1) ->
+            val p0 = markerSurfacePoint(compiled, x, y0)
+            val p1 = markerSurfacePoint(compiled, x, y1)
+            LineNode(p0, p1, palette[(row + col + 2).floorMod(palette.size)])
+        }
+    }
+    listOf(-2f, 0f, 2f).forEach { value ->
+        LineNode(markerSurfacePoint(compiled, -2f, value), markerSurfacePoint(compiled, 2f, value), accent)
+        LineNode(markerSurfacePoint(compiled, value, -2f), markerSurfacePoint(compiled, value, 2f), accent)
+    }
+}
+
+@Composable
+private fun NodeScope.MarkerCurveGraph(
+    graph: MarkerGraphFunctionState,
+    state: ArViewerUiState,
+    palette: List<MaterialInstance>,
+    accent: MaterialInstance
+) {
+    val material = if (graph.selected) accent else palette[graph.colorIndex.floorMod(palette.size)]
+    val samples = markerFunctionSamples(graph.compiled, state.arGraphDomain, 220)
+    samples.zipWithNext().forEach { (a, b) ->
+        if (a.y.isFinite() && b.y.isFinite() && abs(a.y - b.y) <= discontinuityThreshold(state.arGraphDomain)) {
+            LineNode(
+                Position(markerGraphX(a.x.toFloat(), state.arGraphDomain), 0.04f, markerGraphY(a.y.toFloat(), state.arGraphDomain)),
+                Position(markerGraphX(b.x.toFloat(), state.arGraphDomain), 0.04f, markerGraphY(b.y.toFloat(), state.arGraphDomain)),
+                material
+            )
+        }
+    }
+}
+
+@Composable
+private fun NodeScope.MarkerGraphTraceNode(
+    graph: MarkerGraphFunctionState,
+    state: ArViewerUiState,
+    line: MaterialInstance,
+    pointMaterial: MaterialInstance
+) {
+    if (state.markerGraphTraceMode == MarkerGraphTraceMode.Off) return
+    val x = state.arGraphDomain.xMin + (state.arGraphDomain.xMax - state.arGraphDomain.xMin) * state.markerGraphTraceProgress
+    val y = arRenderMathEngine.evaluate2dUnclamped(graph.compiled, x)
+    if (!y.isFinite() || y !in state.arGraphDomain.yMin..state.arGraphDomain.yMax) return
+    val point = Position(markerGraphX(x.toFloat(), state.arGraphDomain), 0.075f, markerGraphY(y.toFloat(), state.arGraphDomain))
+    CubeNode(Size(0.024f, 0.024f, 0.024f), center = point, materialInstance = pointMaterial)
+    if (state.markerGraphTraceMode == MarkerGraphTraceMode.Tangent || state.markerGraphShowDerivative) {
+        val slope = state.arGraphAnalysis.tangent?.tangentSlope ?: 0.0
+        val dx = (state.arGraphDomain.xMax - state.arGraphDomain.xMin) * 0.08
+        val y0 = y - slope * dx
+        val y1 = y + slope * dx
+        LineNode(
+            Position(markerGraphX((x - dx).toFloat(), state.arGraphDomain), 0.062f, markerGraphY(y0.toFloat(), state.arGraphDomain)),
+            Position(markerGraphX((x + dx).toFloat(), state.arGraphDomain), 0.062f, markerGraphY(y1.toFloat(), state.arGraphDomain)),
+            line
+        )
+    }
+    if (state.markerGraphTraceMode == MarkerGraphTraceMode.Integral || state.markerGraphShowIntegralArea) {
+        val lower = min(state.arGraphDomain.xMin, x)
+        val upper = max(state.arGraphDomain.xMin, x)
+        markerFunctionSamples(graph.compiled, state.arGraphDomain.copy(xMin = lower, xMax = upper), 48).forEach { sample ->
+            if (sample.y.isFinite()) {
+                LineNode(
+                    Position(markerGraphX(sample.x.toFloat(), state.arGraphDomain), 0.024f, 0f),
+                    Position(markerGraphX(sample.x.toFloat(), state.arGraphDomain), 0.024f, markerGraphY(sample.y.toFloat(), state.arGraphDomain)),
+                    line
+                )
+            }
+        }
+    }
+}
+
+private fun markerSurfacePoint(compiled: ArCompiledExpression, x: Float, y: Float): Position {
+    val z = arRenderMathEngine.evaluate3d(compiled, x.toDouble(), y.toDouble()).toArFloat()
+    return Position(x * 0.12f, 0.035f + ((z + 1.6f) / 3.2f) * 0.32f, y * 0.12f)
+}
+
+private data class MarkerGraphSample(val x: Double, val y: Double)
+
+private fun markerFunctionSamples(compiled: ArCompiledExpression, domain: ArGraphDomain, samples: Int): List<MarkerGraphSample> =
+    (0..samples).map { index ->
+        val x = domain.xMin + (domain.xMax - domain.xMin) * index / samples
+        MarkerGraphSample(x, arRenderMathEngine.evaluate2dUnclamped(compiled, x))
+    }
+
+private fun discontinuityThreshold(domain: ArGraphDomain): Double =
+    max(3.0, (domain.yMax - domain.yMin) * 0.65)
+
+private fun markerGraphX(x: Float): Float = (x / (2f * PI.toFloat())).coerceIn(-1f, 1f) * 0.28f
+
+private fun markerGraphX(x: Float, domain: ArGraphDomain): Float =
+    (((x - domain.xMin.toFloat()) / (domain.xMax - domain.xMin).toFloat()) - 0.5f).coerceIn(-0.6f, 0.6f) * 0.58f
+
+private fun markerGraphY(y: Float): Float = y.coerceIn(-1.6f, 1.6f) * 0.14f
+
+private fun markerGraphY(y: Float, domain: ArGraphDomain): Float =
+    (((y - domain.yMin.toFloat()) / (domain.yMax - domain.yMin).toFloat()) - 0.5f).coerceIn(-0.6f, 0.6f) * 0.58f
+
+@Composable
+private fun NodeScope.MarkerTransformationWorkspaceNode(
+    materialLoader: MaterialLoader,
+    state: ArViewerUiState
+) {
+    val axis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color.White.copy(alpha = 0.88f)) }
+    val gridMinor = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF70E6FF).copy(alpha = 0.18f)) }
+    val gridMajor = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFB88CFF).copy(alpha = 0.35f)) }
+    val origin = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF5CFFF0)) }
+    val originalMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF53F2FF)) }
+    val transformedMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFA45CFF)) }
+    val pathMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
+    val matrixMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF58F2C2)) }
+    MarkerFlatGrid(axis, gridMinor, gridMajor, origin)
+    val original = listOf(
+        MarkerPlanePoint(-0.13f, -0.1f),
+        MarkerPlanePoint(0.13f, -0.08f),
+        MarkerPlanePoint(-0.02f, 0.13f)
+    )
+    val target = original.map { it.transformedBy(state) }
+    val current = original.zip(target).map { (start, end) -> start.lerpTo(end, state.markerTransformProgress) }
+    MarkerPolygon(original, originalMaterial, height = 0.034f)
+    MarkerPolygon(current, transformedMaterial, height = 0.062f)
+    original.zip(current).forEach { (start, end) ->
+        LineNode(start.toPosition(0.048f), end.toPosition(0.048f), pathMaterial)
+        CubeNode(Size(0.018f, 0.018f, 0.018f), center = end.toPosition(0.068f), materialInstance = transformedMaterial)
+    }
+    MarkerTransformationMatrixGlyph(state, matrixMaterial)
+}
+
+@Composable
+private fun NodeScope.MarkerTrigonometryWorkspaceNode(
+    materialLoader: MaterialLoader,
+    state: ArViewerUiState
+) {
+    val axis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color.White.copy(alpha = 0.9f)) }
+    val circle = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF53F2FF)) }
+    val radius = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFA45CFF)) }
+    val projection = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF58F2C2)) }
+    val pointMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
+    MarkerFlatGrid(axis, circle, circle, pointMaterial)
+    val r = 0.2f
+    val radians = state.markerTrigAngleDegrees * PI.toFloat() / 180f
+    val p = MarkerPlanePoint(cos(radians) * r, sin(radians) * r)
+    val xFoot = MarkerPlanePoint(p.x, 0f)
+    val samples = (0..96).map { index ->
+        val a = index * 2f * PI.toFloat() / 96f
+        MarkerPlanePoint(cos(a) * r, sin(a) * r)
+    }
+    samples.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(0.045f), b.toPosition(0.045f), circle) }
+    LineNode(MarkerPlanePoint(0f, 0f).toPosition(0.07f), p.toPosition(0.07f), radius)
+    LineNode(MarkerPlanePoint(0f, 0f).toPosition(0.052f), xFoot.toPosition(0.052f), projection)
+    LineNode(xFoot.toPosition(0.052f), p.toPosition(0.052f), projection)
+    CubeNode(Size(0.02f, 0.02f, 0.02f), center = p.toPosition(0.078f), materialInstance = pointMaterial)
+    val wave = (0..72).map { index ->
+        val theta = index * 2f * PI.toFloat() / 72f
+        MarkerPlanePoint(-0.27f + index * (0.54f / 72f), -0.27f + sin(theta) * 0.055f)
+    }
+    wave.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(0.042f), b.toPosition(0.042f), radius) }
+    val markerX = -0.27f + (state.markerTrigAngleDegrees / 360f) * 0.54f
+    LineNode(Position(markerX, 0.045f, -0.34f), Position(markerX, 0.12f, -0.34f), projection)
+}
+
+@Composable
+private fun NodeScope.MarkerMeasurementWorkspaceNode(
+    materialLoader: MaterialLoader,
+    state: ArViewerUiState
+) {
+    val axis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color.White.copy(alpha = 0.85f)) }
+    val grid = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF70E6FF).copy(alpha = 0.2f)) }
+    val shape = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF58F2C2)) }
+    val measure = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
+    val angle = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFA45CFF)) }
+    MarkerFlatGrid(axis, grid, grid, measure)
+    val a = MarkerPlanePoint(-0.18f, -0.1f)
+    val b = MarkerPlanePoint(0.18f, -0.1f)
+    val c = MarkerPlanePoint(0.04f, 0.15f)
+    MarkerPolygon(listOf(a, b, c), shape, height = 0.055f)
+    val foot = MarkerPlanePoint(c.x, a.y)
+    LineNode(c.toPosition(0.075f), foot.toPosition(0.075f), measure)
+    LineNode(a.toPosition(0.075f), b.toPosition(0.075f), measure)
+    LineNode(MarkerPlanePoint(-0.02f, -0.1f).toPosition(0.09f), MarkerPlanePoint(0.03f, -0.05f).toPosition(0.09f), angle)
+    LineNode(MarkerPlanePoint(0.03f, -0.05f).toPosition(0.09f), MarkerPlanePoint(0.08f, -0.1f).toPosition(0.09f), angle)
+    listOf(a, b, c, foot).forEach {
+        CubeNode(Size(0.018f, 0.018f, 0.018f), center = it.toPosition(0.084f), materialInstance = measure)
+    }
+}
+
+@Composable
+private fun NodeScope.MarkerFlatGrid(
+    axis: MaterialInstance,
+    gridMinor: MaterialInstance,
+    gridMajor: MaterialInstance,
+    origin: MaterialInstance
+) {
+    val half = 0.32f
+    (-8..8).forEach { i ->
+        val p = i * (half / 8f)
+        val material = if (i % 4 == 0) gridMajor else gridMinor
+        LineNode(Position(-half, 0.012f, p), Position(half, 0.012f, p), material)
+        LineNode(Position(p, 0.012f, -half), Position(p, 0.012f, half), material)
+    }
+    LineNode(Position(-0.36f, 0.02f, 0f), Position(0.36f, 0.02f, 0f), axis)
+    LineNode(Position(0f, 0.02f, -0.36f), Position(0f, 0.02f, 0.36f), axis)
+    CubeNode(Size(0.016f, 0.016f, 0.016f), center = Position(0f, 0.03f, 0f), materialInstance = origin)
+}
+
+@Composable
+private fun NodeScope.MarkerPolygon(points: List<MarkerPlanePoint>, material: MaterialInstance, height: Float) {
+    points.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(height), b.toPosition(height), material) }
+    if (points.size > 2) LineNode(points.last().toPosition(height), points.first().toPosition(height), material)
+}
+
+@Composable
+private fun NodeScope.MarkerTransformationMatrixGlyph(state: ArViewerUiState, material: MaterialInstance) {
+    val baseX = 0.24f
+    val baseZ = -0.29f
+    val height = 0.055f
+    val width = 0.09f
+    val rows = 3
+    val cols = 3
+    (0..rows).forEach { row ->
+        val z = baseZ + row * (width / rows)
+        LineNode(Position(baseX, height, z), Position(baseX + width, height, z), material)
+    }
+    (0..cols).forEach { col ->
+        val x = baseX + col * (width / cols)
+        LineNode(Position(x, height, baseZ), Position(x, height, baseZ + width), material)
+    }
+    val pulse = 0.012f + state.markerTransformProgress * 0.018f
+    CubeNode(Size(pulse, pulse, pulse), center = Position(baseX + width + 0.03f, height, baseZ + width), materialInstance = material)
+}
+
+private data class MarkerPlanePoint(val x: Float, val y: Float) {
+    fun toPosition(height: Float): Position = Position(x, height, y)
+    fun lerpTo(other: MarkerPlanePoint, progress: Float): MarkerPlanePoint =
+        MarkerPlanePoint(
+            x = x + (other.x - x) * progress.coerceIn(0f, 1f),
+            y = y + (other.y - y) * progress.coerceIn(0f, 1f)
+        )
+
+    fun transformedBy(state: ArViewerUiState): MarkerPlanePoint = when (state.markerTransformTool) {
+        MarkerTransformationTool.Translation -> MarkerPlanePoint(x + state.markerTranslationX, y + state.markerTranslationY)
+        MarkerTransformationTool.Rotation -> rotateBy(state.markerRotationDegrees * if (state.markerRotationClockwise) -1f else 1f)
+        MarkerTransformationTool.Reflection -> reflectedBy(state.markerReflectionLine)
+        MarkerTransformationTool.Dilation -> MarkerPlanePoint(x * state.markerDilationScale, y * state.markerDilationScale)
+        MarkerTransformationTool.HorizontalStretch -> MarkerPlanePoint(x * state.markerHorizontalStretch, y)
+        MarkerTransformationTool.VerticalStretch -> MarkerPlanePoint(x, y * state.markerVerticalStretch)
+        MarkerTransformationTool.Shear -> MarkerPlanePoint(x + state.markerShear * y, y)
+        MarkerTransformationTool.Composite -> rotateBy(state.markerRotationDegrees)
+            .let { MarkerPlanePoint(it.x * state.markerDilationScale, it.y * state.markerDilationScale) }
+            .let { MarkerPlanePoint(it.x + state.markerTranslationX, it.y + state.markerTranslationY) }
+    }
+
+    private fun rotateBy(degrees: Float): MarkerPlanePoint {
+        val radians = degrees * PI.toFloat() / 180f
+        return MarkerPlanePoint(x * cos(radians) - y * sin(radians), x * sin(radians) + y * cos(radians))
+    }
+
+    private fun reflectedBy(line: MarkerReflectionLine): MarkerPlanePoint = when (line) {
+        MarkerReflectionLine.XAxis -> MarkerPlanePoint(x, -y)
+        MarkerReflectionLine.YAxis -> MarkerPlanePoint(-x, y)
+        MarkerReflectionLine.YEqualsX -> MarkerPlanePoint(y, x)
+        MarkerReflectionLine.YEqualsNegativeX -> MarkerPlanePoint(-y, -x)
+        MarkerReflectionLine.UserLine -> reflectAcrossLine(angleRadians = atan2(0.5f, 1f))
+    }
+
+    private fun reflectAcrossLine(angleRadians: Float): MarkerPlanePoint {
+        val rotated = rotateBy(-angleRadians * 180f / PI.toFloat())
+        val reflected = MarkerPlanePoint(rotated.x, -rotated.y)
+        return reflected.rotateBy(angleRadians * 180f / PI.toFloat())
+    }
+}
+
+private fun Int.floorMod(size: Int): Int = ((this % size) + size) % size
 
 private fun GraphColorMap.palette(): List<Color> = when (this) {
     GraphColorMap.Height -> listOf(
@@ -1100,6 +1631,7 @@ private fun findBestPlacementHit(
         return OutdoorGeospatialArEngine.geometryHit(frame, x, y)
             ?.let { PlacementCandidate(it, PlacementHitKind.StreetscapeGeometry) }
     }
+    if (mode == ArEngineMode.PaperGraph) return null
     val trackedHits = runCatching { frame.hitTest(x, y) }.getOrDefault(emptyList())
     val planeHit = trackedHits.firstOrNull { result ->
         val plane = result.trackable as? Plane
@@ -1113,9 +1645,10 @@ private fun findBestPlacementHit(
     }?.let { PlacementCandidate(it, PlacementHitKind.Plane) }
     if (planeHit != null) return planeHit
 
+    val depthAllowed = mode !in setOf(ArEngineMode.Indoor, ArEngineMode.SurfacePlacement)
     val depthHit = trackedHits.firstOrNull { result ->
         (result.trackable as? DepthPoint)?.trackingState == TrackingState.TRACKING
-    }?.let { PlacementCandidate(it, PlacementHitKind.DepthPoint) }
+    }?.takeIf { depthAllowed }?.let { PlacementCandidate(it, PlacementHitKind.DepthPoint) }
     if (depthHit != null) return depthHit
 
     if (!allowFeaturePoint || mode == ArEngineMode.SurfacePlacement) return null
@@ -1136,6 +1669,20 @@ private fun findBestPlacementHit(
             ?.let { PlacementCandidate(it, PlacementHitKind.Instant) }
     }.getOrNull()
 }
+
+private fun Frame.findLockedMarkerImage(): AugmentedImage? =
+    getUpdatedTrackables(AugmentedImage::class.java)
+        .filter { image ->
+            image.trackingState == TrackingState.TRACKING &&
+                image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+        }
+        .maxByOrNull { image -> image.extentX.coerceAtLeast(0f) * image.extentZ.coerceAtLeast(0f) }
+
+private fun String.extractArMarkerId(): String? =
+    Regex("""[Gg]01""")
+        .find(this)
+        ?.value
+        ?.uppercase()
 
 private fun TrackingState?.toTrackingStatus(): TrackingStatus = when (this) {
     TrackingState.TRACKING -> TrackingStatus.Tracking
@@ -1158,6 +1705,23 @@ private fun trackingGuidance(cameraState: TrackingState, reason: TrackingFailure
         cameraState == TrackingState.STOPPED -> "Tracking stopped. Reopen the AR view."
         else -> "Initializing AR tracking."
     }
+
+private fun ArEngineMode.toCommonSurfaceMode(): CommonArSurfaceMode = when (this) {
+    ArEngineMode.SurfacePlacement -> CommonArSurfaceMode.SurfaceOnly
+    ArEngineMode.AirPlacement -> CommonArSurfaceMode.AirPlacement
+    ArEngineMode.PaperGraph -> CommonArSurfaceMode.PaperGraph
+    ArEngineMode.OutdoorGeospatialMath -> CommonArSurfaceMode.OutdoorGeospatial
+    ArEngineMode.Indoor -> CommonArSurfaceMode.Markerless
+}
+
+private fun CommonArSurfaceState.toPlacementHitKind(): PlacementHitKind = when (hitKind) {
+    CommonArSurfaceHitKind.Plane -> PlacementHitKind.Plane
+    CommonArSurfaceHitKind.DepthPoint -> PlacementHitKind.DepthPoint
+    CommonArSurfaceHitKind.FeaturePoint -> PlacementHitKind.FeaturePoint
+    CommonArSurfaceHitKind.InstantPreview -> PlacementHitKind.Instant
+    CommonArSurfaceHitKind.StreetscapeGeometry -> PlacementHitKind.StreetscapeGeometry
+    CommonArSurfaceHitKind.None -> PlacementHitKind.None
+}
 
 private const val APPROXIMATE_PLACEMENT_DISTANCE_METERS = 0.8f
 
@@ -1217,7 +1781,7 @@ private fun NodeScope.ConstructionGeometryNodes(state: ArViewerUiState, material
             ConstructionObjectKind.Perpendicular -> {
                 if (construction.points.size >= 2) {
                     LineNode(construction.points[0].toPosition(), construction.points[1].toPosition(), material)
-                    if (construction.kind == ConstructionObjectKind.Vector) {
+                    if (construction.kind in setOf(ConstructionObjectKind.Vector, ConstructionObjectKind.Ray)) {
                         VectorHead(construction.points[0].toPosition(), construction.points[1].toPosition(), material)
                     }
                 }
@@ -1817,10 +2381,88 @@ private fun ArChrome(
     onLayers: () -> Unit,
     onSavedScenes: () -> Unit,
     onSave: () -> Unit,
-    onClearScene: () -> Unit
+    onClearScene: () -> Unit,
+    onMarkerZoom: (Float) -> Unit,
+    onMarkerRotate: (Float) -> Unit,
+    onMarkerExpand: () -> Unit,
+    onMarkerNext: () -> Unit,
+    onMarkerReset: () -> Unit,
+    onMarkerActivity: (MarkerMathActivity) -> Unit,
+    onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onMarker3dObject: (String) -> Unit,
+    onMarkerTransformationTool: (MarkerTransformationTool) -> Unit,
+    onMarkerTransformProgress: (Float) -> Unit,
+    onMarkerTranslationX: (Float) -> Unit,
+    onMarkerTranslationY: (Float) -> Unit,
+    onMarkerRotationDegrees: (Float) -> Unit,
+    onMarkerRotationDirection: () -> Unit,
+    onMarkerReflectionLine: (MarkerReflectionLine) -> Unit,
+    onMarkerDilationScale: (Float) -> Unit,
+    onMarkerHorizontalStretch: (Float) -> Unit,
+    onMarkerVerticalStretch: (Float) -> Unit,
+    onMarkerShear: (Float) -> Unit,
+    onUndoMarkerTransformation: () -> Unit,
+    onMarkerTrigAngle: (Float) -> Unit,
+    onAddMarkerGraphFunction: () -> Unit,
+    onSelectMarkerGraphFunction: (String) -> Unit,
+    onToggleSelectedMarkerGraphVisibility: () -> Unit,
+    onDeleteSelectedMarkerGraphFunction: () -> Unit,
+    onDuplicateSelectedMarkerGraphFunction: () -> Unit,
+    onMarkerGraphParameter: (String, Float) -> Unit,
+    onMarkerGraphTrace: (MarkerGraphTraceMode) -> Unit,
+    onMarkerGraphTraceProgress: (Float) -> Unit,
+    onMarkerGraphZoom: (Double) -> Unit,
+    onMarkerGraphPan: (Double, Double) -> Unit,
+    onMarkerGraphFit: () -> Unit,
+    onClearMarkerWorkspace: () -> Unit
 ) {
     var controlsExpanded by remember { mutableStateOf(state.mathScene.objects.isEmpty()) }
     var activeMenu by remember { mutableStateOf(ArPlacementMenu.Functions) }
+    if (state.isQuietMarkerMode()) {
+        QuietMarkerChrome(
+            state = state,
+            onBack = onBack,
+            onMarkerZoom = onMarkerZoom,
+            onMarkerRotate = onMarkerRotate,
+            onMarkerExpand = onMarkerExpand,
+            onMarkerNext = onMarkerNext,
+            onMarkerReset = onMarkerReset,
+            onLiveEquation = onLiveEquation,
+            onGraphColorMap = onGraphColorMap,
+            onFunction3dTransform = onFunction3dTransform,
+            onAnimationProgress = onAnimationProgress,
+            onSlicePosition = onSlicePosition,
+            onMarkerActivity = onMarkerActivity,
+            onMarker2dShape = onMarker2dShape,
+            onMarker3dObject = onMarker3dObject,
+            onMarkerTransformationTool = onMarkerTransformationTool,
+            onMarkerTransformProgress = onMarkerTransformProgress,
+            onMarkerTranslationX = onMarkerTranslationX,
+            onMarkerTranslationY = onMarkerTranslationY,
+            onMarkerRotationDegrees = onMarkerRotationDegrees,
+            onMarkerRotationDirection = onMarkerRotationDirection,
+            onMarkerReflectionLine = onMarkerReflectionLine,
+            onMarkerDilationScale = onMarkerDilationScale,
+            onMarkerHorizontalStretch = onMarkerHorizontalStretch,
+            onMarkerVerticalStretch = onMarkerVerticalStretch,
+            onMarkerShear = onMarkerShear,
+            onUndoMarkerTransformation = onUndoMarkerTransformation,
+            onMarkerTrigAngle = onMarkerTrigAngle,
+            onAddMarkerGraphFunction = onAddMarkerGraphFunction,
+            onSelectMarkerGraphFunction = onSelectMarkerGraphFunction,
+            onToggleSelectedMarkerGraphVisibility = onToggleSelectedMarkerGraphVisibility,
+            onDeleteSelectedMarkerGraphFunction = onDeleteSelectedMarkerGraphFunction,
+            onDuplicateSelectedMarkerGraphFunction = onDuplicateSelectedMarkerGraphFunction,
+            onMarkerGraphParameter = onMarkerGraphParameter,
+            onMarkerGraphTrace = onMarkerGraphTrace,
+            onMarkerGraphTraceProgress = onMarkerGraphTraceProgress,
+            onMarkerGraphZoom = onMarkerGraphZoom,
+            onMarkerGraphPan = onMarkerGraphPan,
+            onMarkerGraphFit = onMarkerGraphFit,
+            onClearMarkerWorkspace = onClearMarkerWorkspace
+        )
+        return
+    }
     LaunchedEffect(state.mathScene.objects.size) {
         if (state.mathScene.objects.isNotEmpty()) controlsExpanded = false
     }
@@ -2271,7 +2913,7 @@ private fun ArModeSwitcher(
 
 private fun ArEngineMode.segmentLabel(): String = when (this) {
     ArEngineMode.Indoor -> "Indoor AR"
-    ArEngineMode.PaperGraph -> "Paper Graph"
+    ArEngineMode.PaperGraph -> "Marker AR"
     ArEngineMode.OutdoorGeospatialMath -> "Outdoor Geo"
     ArEngineMode.SurfacePlacement -> "Surface"
     ArEngineMode.AirPlacement -> "Air"
@@ -2291,17 +2933,20 @@ private fun ArViewerUiState.availableMathExperiences(): List<MathArExperience> =
 }
 
 private fun ArViewerUiState.availablePlacementMenus(): List<ArPlacementMenu> = when (arEngineMode) {
-    ArEngineMode.PaperGraph -> listOf(ArPlacementMenu.Graphs, ArPlacementMenu.Functions)
+    ArEngineMode.PaperGraph -> listOf(ArPlacementMenu.Objects, ArPlacementMenu.Graphs, ArPlacementMenu.Functions)
     ArEngineMode.OutdoorGeospatialMath -> listOf(ArPlacementMenu.Graphs, ArPlacementMenu.Objects)
     ArEngineMode.SurfacePlacement -> listOf(ArPlacementMenu.Objects, ArPlacementMenu.Graphs, ArPlacementMenu.Scene)
     ArEngineMode.AirPlacement -> listOf(ArPlacementMenu.Functions, ArPlacementMenu.Graphs, ArPlacementMenu.Solar)
     ArEngineMode.Indoor -> mathArExperience.placementMenus()
 }
 
+private fun ArViewerUiState.isQuietMarkerMode(): Boolean =
+    arEngineMode == ArEngineMode.PaperGraph
+
 private fun MathArExperience.label(): String = when (this) {
     MathArExperience.MarkerlessObjects -> "Markerless Math"
     MathArExperience.Drawing2dTo3d -> "Drawing 2D to 3D"
-    MathArExperience.MarkerBasedGraph -> "Marker-Based Graph"
+    MathArExperience.MarkerBasedGraph -> "Marker-Based AR"
     MathArExperience.OutdoorGeometry -> "Outdoor Geometry"
     MathArExperience.SolarSystem -> "Solar System"
     MathArExperience.SceneTools -> "Scene Tools"
@@ -2314,6 +2959,1320 @@ private fun MathArExperience.placementMenus(): List<ArPlacementMenu> = when (thi
     MathArExperience.OutdoorGeometry -> listOf(ArPlacementMenu.Graphs, ArPlacementMenu.Objects)
     MathArExperience.SolarSystem -> listOf(ArPlacementMenu.Solar, ArPlacementMenu.Objects)
     MathArExperience.SceneTools -> listOf(ArPlacementMenu.Scene)
+}
+
+private val arMathPurple = Color(0xFF8B4DFF)
+private val arMathViolet = Color(0xFFA45CFF)
+private val arMathCyan = Color(0xFF42E8FF)
+private val arMathMint = Color(0xFF58F2C2)
+private val arMathGlass = Color.Black.copy(alpha = 0.58f)
+private val arMathBorder = Color.White.copy(alpha = 0.16f)
+
+@Composable
+private fun QuietMarkerChrome(
+    state: ArViewerUiState,
+    onBack: () -> Unit,
+    onMarkerZoom: (Float) -> Unit,
+    onMarkerRotate: (Float) -> Unit,
+    onMarkerExpand: () -> Unit,
+    onMarkerNext: () -> Unit,
+    onMarkerReset: () -> Unit,
+    onLiveEquation: (String) -> Unit,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onFunction3dTransform: (Function3dTransformMode) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onSlicePosition: (Float) -> Unit,
+    onMarkerActivity: (MarkerMathActivity) -> Unit,
+    onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onMarker3dObject: (String) -> Unit,
+    onMarkerTransformationTool: (MarkerTransformationTool) -> Unit,
+    onMarkerTransformProgress: (Float) -> Unit,
+    onMarkerTranslationX: (Float) -> Unit,
+    onMarkerTranslationY: (Float) -> Unit,
+    onMarkerRotationDegrees: (Float) -> Unit,
+    onMarkerRotationDirection: () -> Unit,
+    onMarkerReflectionLine: (MarkerReflectionLine) -> Unit,
+    onMarkerDilationScale: (Float) -> Unit,
+    onMarkerHorizontalStretch: (Float) -> Unit,
+    onMarkerVerticalStretch: (Float) -> Unit,
+    onMarkerShear: (Float) -> Unit,
+    onUndoMarkerTransformation: () -> Unit,
+    onMarkerTrigAngle: (Float) -> Unit,
+    onAddMarkerGraphFunction: () -> Unit,
+    onSelectMarkerGraphFunction: (String) -> Unit,
+    onToggleSelectedMarkerGraphVisibility: () -> Unit,
+    onDeleteSelectedMarkerGraphFunction: () -> Unit,
+    onDuplicateSelectedMarkerGraphFunction: () -> Unit,
+    onMarkerGraphParameter: (String, Float) -> Unit,
+    onMarkerGraphTrace: (MarkerGraphTraceMode) -> Unit,
+    onMarkerGraphTraceProgress: (Float) -> Unit,
+    onMarkerGraphZoom: (Double) -> Unit,
+    onMarkerGraphPan: (Double, Double) -> Unit,
+    onMarkerGraphFit: () -> Unit,
+    onClearMarkerWorkspace: () -> Unit
+) {
+    val lockedTarget = state.paperGraph?.bestLockedTarget
+    val interaction = state.markerLessonInteraction
+    val recognized = lockedTarget != null || state.activeMarkerLessonId != null
+    val lessonTitle = state.markerLessonTitle.ifBlank { lockedTarget?.name ?: "Scan an AR Maths marker" }
+    val markerSubtitle = when {
+        !recognized -> "Scan G01"
+        lockedTarget?.markerQualityScore != null && lockedTarget.markerQualityScore < 90 -> "Hold G01 steady"
+        else -> lessonTitle
+    }
+    val haptic = LocalHapticFeedback.current
+    Box(Modifier.fillMaxSize()) {
+        MinimalMarkerTopBar(
+            title = state.activeMarkerLessonId ?: "AR Math",
+            subtitle = markerSubtitle,
+            onBack = onBack,
+            modifier = Modifier
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .align(Alignment.TopCenter)
+        )
+        if (recognized) {
+            MarkerWorkspacePanel(
+                state = state,
+                onMarkerActivity = onMarkerActivity,
+                onMarker2dShape = onMarker2dShape,
+                onMarker3dObject = onMarker3dObject,
+                onLiveEquation = onLiveEquation,
+                onGraphColorMap = onGraphColorMap,
+                onFunction3dTransform = onFunction3dTransform,
+                onAnimationProgress = onAnimationProgress,
+                onSlicePosition = onSlicePosition,
+                onMarkerTransformationTool = onMarkerTransformationTool,
+                onMarkerTransformProgress = onMarkerTransformProgress,
+                onMarkerTranslationX = onMarkerTranslationX,
+                onMarkerTranslationY = onMarkerTranslationY,
+                onMarkerRotationDegrees = onMarkerRotationDegrees,
+                onMarkerRotationDirection = onMarkerRotationDirection,
+                onMarkerReflectionLine = onMarkerReflectionLine,
+                onMarkerDilationScale = onMarkerDilationScale,
+                onMarkerHorizontalStretch = onMarkerHorizontalStretch,
+                onMarkerVerticalStretch = onMarkerVerticalStretch,
+                onMarkerShear = onMarkerShear,
+                onUndoMarkerTransformation = onUndoMarkerTransformation,
+                onMarkerTrigAngle = onMarkerTrigAngle,
+                onAddMarkerGraphFunction = onAddMarkerGraphFunction,
+                onSelectMarkerGraphFunction = onSelectMarkerGraphFunction,
+                onToggleSelectedMarkerGraphVisibility = onToggleSelectedMarkerGraphVisibility,
+                onDeleteSelectedMarkerGraphFunction = onDeleteSelectedMarkerGraphFunction,
+                onDuplicateSelectedMarkerGraphFunction = onDuplicateSelectedMarkerGraphFunction,
+                onMarkerGraphParameter = onMarkerGraphParameter,
+                onMarkerGraphTrace = onMarkerGraphTrace,
+                onMarkerGraphTraceProgress = onMarkerGraphTraceProgress,
+                onMarkerGraphZoom = onMarkerGraphZoom,
+                onMarkerGraphPan = onMarkerGraphPan,
+                onMarkerGraphFit = onMarkerGraphFit,
+                onClearMarkerWorkspace = onClearMarkerWorkspace,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 12.dp, start = 12.dp, end = 12.dp)
+            )
+        }
+        if (!recognized) {
+            MinimalScanHint(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 18.dp)
+            )
+        }
+        if (recognized) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(top = 78.dp, end = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                MinimalRoundButton("-", "Zoom out", { onMarkerZoom(0.9f) })
+                MinimalRoundButton("+", "Zoom in", { onMarkerZoom(1.1f) })
+                MinimalRoundButton("R", "Rotate", {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onMarkerRotate(15f)
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkerWorkspacePanel(
+    state: ArViewerUiState,
+    onMarkerActivity: (MarkerMathActivity) -> Unit,
+    onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onMarker3dObject: (String) -> Unit,
+    onLiveEquation: (String) -> Unit,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onFunction3dTransform: (Function3dTransformMode) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onSlicePosition: (Float) -> Unit,
+    onMarkerTransformationTool: (MarkerTransformationTool) -> Unit,
+    onMarkerTransformProgress: (Float) -> Unit,
+    onMarkerTranslationX: (Float) -> Unit,
+    onMarkerTranslationY: (Float) -> Unit,
+    onMarkerRotationDegrees: (Float) -> Unit,
+    onMarkerRotationDirection: () -> Unit,
+    onMarkerReflectionLine: (MarkerReflectionLine) -> Unit,
+    onMarkerDilationScale: (Float) -> Unit,
+    onMarkerHorizontalStretch: (Float) -> Unit,
+    onMarkerVerticalStretch: (Float) -> Unit,
+    onMarkerShear: (Float) -> Unit,
+    onUndoMarkerTransformation: () -> Unit,
+    onMarkerTrigAngle: (Float) -> Unit,
+    onAddMarkerGraphFunction: () -> Unit,
+    onSelectMarkerGraphFunction: (String) -> Unit,
+    onToggleSelectedMarkerGraphVisibility: () -> Unit,
+    onDeleteSelectedMarkerGraphFunction: () -> Unit,
+    onDuplicateSelectedMarkerGraphFunction: () -> Unit,
+    onMarkerGraphParameter: (String, Float) -> Unit,
+    onMarkerGraphTrace: (MarkerGraphTraceMode) -> Unit,
+    onMarkerGraphTraceProgress: (Float) -> Unit,
+    onMarkerGraphZoom: (Double) -> Unit,
+    onMarkerGraphPan: (Double, Double) -> Unit,
+    onMarkerGraphFit: () -> Unit,
+    onClearMarkerWorkspace: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color.Black.copy(alpha = 0.46f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, arMathCyan.copy(alpha = 0.18f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                items(MarkerMathActivity.entries) { activity ->
+                    RealGlassChip(
+                        label = activity.shortLabel(),
+                        selected = state.markerMathActivity == activity,
+                        accent = if (activity == MarkerMathActivity.Geometry3D) arMathViolet else arMathCyan,
+                        onClick = { onMarkerActivity(activity) }
+                    )
+                }
+                item {
+                    RealGlassChip(label = "Clear", selected = false, accent = Color(0xFFFF6B8A), onClick = onClearMarkerWorkspace)
+                }
+            }
+            when (state.markerMathActivity) {
+                MarkerMathActivity.Geometry2D -> Marker2dToolTray(onMarker2dShape)
+                MarkerMathActivity.Geometry3D -> Marker3dToolTray(onMarker3dObject)
+                MarkerMathActivity.FunctionGraph -> MarkerGraphToolTray(
+                    state = state,
+                    onLiveEquation = onLiveEquation,
+                    onAddMarkerGraphFunction = onAddMarkerGraphFunction,
+                    onSelectMarkerGraphFunction = onSelectMarkerGraphFunction,
+                    onToggleSelectedMarkerGraphVisibility = onToggleSelectedMarkerGraphVisibility,
+                    onDeleteSelectedMarkerGraphFunction = onDeleteSelectedMarkerGraphFunction,
+                    onDuplicateSelectedMarkerGraphFunction = onDuplicateSelectedMarkerGraphFunction,
+                    onMarkerGraphParameter = onMarkerGraphParameter,
+                    onMarkerGraphTrace = onMarkerGraphTrace,
+                    onMarkerGraphTraceProgress = onMarkerGraphTraceProgress,
+                    onMarkerGraphZoom = onMarkerGraphZoom,
+                    onMarkerGraphPan = onMarkerGraphPan,
+                    onMarkerGraphFit = onMarkerGraphFit,
+                    onGraphColorMap = onGraphColorMap,
+                    onFunction3dTransform = onFunction3dTransform,
+                    onAnimationProgress = onAnimationProgress,
+                    onSlicePosition = onSlicePosition
+                )
+                MarkerMathActivity.CoordinateLab -> MarkerCoordinateToolTray(onMarker2dShape)
+                MarkerMathActivity.Transformations -> MarkerTransformationToolTray(
+                    state = state,
+                    onTool = onMarkerTransformationTool,
+                    onProgress = onMarkerTransformProgress,
+                    onTranslationX = onMarkerTranslationX,
+                    onTranslationY = onMarkerTranslationY,
+                    onRotationDegrees = onMarkerRotationDegrees,
+                    onRotationDirection = onMarkerRotationDirection,
+                    onReflectionLine = onMarkerReflectionLine,
+                    onDilationScale = onMarkerDilationScale,
+                    onHorizontalStretch = onMarkerHorizontalStretch,
+                    onVerticalStretch = onMarkerVerticalStretch,
+                    onShear = onMarkerShear,
+                    onUndo = onUndoMarkerTransformation
+                )
+                MarkerMathActivity.MeasurementLab -> MarkerMeasurementChallengeTray(onMarker2dShape, onMarker3dObject)
+                MarkerMathActivity.Trigonometry -> MarkerTrigonometryToolTray(state, onMarkerTrigAngle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun Marker2dToolTray(onMarker2dShape: (Marker2dShapeTool) -> Unit) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        items(
+            listOf(
+                Marker2dShapeTool.Point,
+                Marker2dShapeTool.Line,
+                Marker2dShapeTool.Segment,
+                Marker2dShapeTool.Ray,
+                Marker2dShapeTool.Triangle,
+                Marker2dShapeTool.Square,
+                Marker2dShapeTool.Rectangle,
+                Marker2dShapeTool.Circle,
+                Marker2dShapeTool.Ellipse,
+                Marker2dShapeTool.Polygon,
+                Marker2dShapeTool.RegularPolygon,
+                Marker2dShapeTool.Angle,
+                Marker2dShapeTool.Arc,
+                Marker2dShapeTool.Perpendicular,
+                Marker2dShapeTool.Parallel
+            )
+        ) { shape ->
+            RealGlassChip(label = shape.label, selected = false, accent = arMathMint, onClick = { onMarker2dShape(shape) })
+        }
+    }
+}
+
+@Composable
+private fun Marker3dToolTray(onMarker3dObject: (String) -> Unit) {
+    val solids = listOf(
+        "cube" to "Cube",
+        "rectangular-prism" to "Cuboid",
+        "sphere" to "Sphere",
+        "sphere" to "Hemisphere",
+        "cylinder" to "Cylinder",
+        "cone" to "Cone",
+        "cone" to "Pyramid",
+        "rectangular-prism" to "Triangular prism",
+        "rectangular-prism" to "Rectangular prism",
+        "triangle" to "Tetrahedron",
+        "circle" to "Torus",
+        "cone" to "Frustum",
+        "rectangular-prism" to "Custom prism",
+        "cone" to "Custom pyramid"
+    )
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        items(solids) { (definitionId, label) ->
+            RealGlassChip(label = label, selected = false, accent = arMathViolet, onClick = { onMarker3dObject(definitionId) })
+        }
+    }
+}
+
+@Composable
+private fun MarkerGraphToolTray(
+    state: ArViewerUiState,
+    onLiveEquation: (String) -> Unit,
+    onAddMarkerGraphFunction: () -> Unit,
+    onSelectMarkerGraphFunction: (String) -> Unit,
+    onToggleSelectedMarkerGraphVisibility: () -> Unit,
+    onDeleteSelectedMarkerGraphFunction: () -> Unit,
+    onDuplicateSelectedMarkerGraphFunction: () -> Unit,
+    onMarkerGraphParameter: (String, Float) -> Unit,
+    onMarkerGraphTrace: (MarkerGraphTraceMode) -> Unit,
+    onMarkerGraphTraceProgress: (Float) -> Unit,
+    onMarkerGraphZoom: (Double) -> Unit,
+    onMarkerGraphPan: (Double, Double) -> Unit,
+    onMarkerGraphFit: () -> Unit,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onFunction3dTransform: (Function3dTransformMode) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onSlicePosition: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = state.liveEquation,
+            onValueChange = onLiveEquation,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Function") },
+            placeholder = { Text("y = 2x + 3, y = |x|, y = a sin(bx + c) + d") },
+            textStyle = MaterialTheme.typography.titleMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip(label = "Add", selected = false, accent = arMathMint, onClick = onAddMarkerGraphFunction) }
+            items(listOf("y = x", "y = 2x + 3", "y = x^2", "y = x^3", "y = |x|", "y = sqrt(x)", "y = 1/x", "y = sin(x)", "y = cos(x)", "y = tan(x)", "y = log(x)", "y = e^x", "y = a sin(bx + c) + d", "x^2 + y^2 = r^2")) { expression ->
+                RealGlassChip(label = expression, selected = state.liveEquation == expression, accent = arMathMint, onClick = { onLiveEquation(expression) })
+            }
+        }
+        if (state.markerGraphFunctions.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                items(state.markerGraphFunctions) { graph ->
+                    RealGlassChip(
+                        label = if (graph.visible) graph.source else "${graph.source} off",
+                        selected = graph.selected,
+                        accent = markerGraphPaletteColor(graph.colorIndex),
+                        onClick = { onSelectMarkerGraphFunction(graph.id) }
+                    )
+                }
+                item { RealGlassChip(label = "Hide", selected = false, accent = Color(0xFFFFC857), onClick = onToggleSelectedMarkerGraphVisibility) }
+                item { RealGlassChip(label = "Copy", selected = false, accent = arMathCyan, onClick = onDuplicateSelectedMarkerGraphFunction) }
+                item { RealGlassChip(label = "Delete", selected = false, accent = Color(0xFFFF6B8A), onClick = onDeleteSelectedMarkerGraphFunction) }
+            }
+        }
+        state.markerGraphFunctions.firstOrNull { it.selected }?.takeIf { it.sliders.isNotEmpty() }?.let { graph ->
+            graph.sliders.forEach { slider ->
+                MarkerSlider(
+                    label = slider.symbol,
+                    value = slider.value.toFloat(),
+                    minValue = slider.minimum.toFloat(),
+                    maxValue = slider.maximum.toFloat(),
+                    onValue = { onMarkerGraphParameter(slider.symbol, it) }
+                )
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip(label = "Zoom +", selected = false, accent = arMathViolet, onClick = { onMarkerGraphZoom(0.75) }) }
+            item { RealGlassChip(label = "Zoom -", selected = false, accent = arMathViolet, onClick = { onMarkerGraphZoom(1.35) }) }
+            item { RealGlassChip(label = "Fit", selected = false, accent = arMathMint, onClick = onMarkerGraphFit) }
+            item { RealGlassChip(label = "Pan L", selected = false, accent = arMathCyan, onClick = { onMarkerGraphPan(-0.75, 0.0) }) }
+            item { RealGlassChip(label = "Pan R", selected = false, accent = arMathCyan, onClick = { onMarkerGraphPan(0.75, 0.0) }) }
+            item { RealGlassChip(label = "Trace", selected = state.markerGraphTraceMode == MarkerGraphTraceMode.Trace, accent = arMathMint, onClick = { onMarkerGraphTrace(MarkerGraphTraceMode.Trace) }) }
+            item { RealGlassChip(label = "Tangent", selected = state.markerGraphTraceMode == MarkerGraphTraceMode.Tangent, accent = arMathMint, onClick = { onMarkerGraphTrace(MarkerGraphTraceMode.Tangent) }) }
+            item { RealGlassChip(label = "Integral", selected = state.markerGraphTraceMode == MarkerGraphTraceMode.Integral, accent = arMathMint, onClick = { onMarkerGraphTrace(MarkerGraphTraceMode.Integral) }) }
+            items(GraphColorMap.entries.take(5)) { map ->
+                RealGlassChip(label = map.label(), selected = state.graphColorMap == map, accent = arMathCyan, onClick = { onGraphColorMap(map) })
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Trace", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.width(72.dp))
+            Slider(value = state.markerGraphTraceProgress, onValueChange = onMarkerGraphTraceProgress, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun MarkerCoordinateToolTray(onMarker2dShape: (Marker2dShapeTool) -> Unit) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        items(listOf("Plot point" to Marker2dShapeTool.Point, "Join" to Marker2dShapeTool.Line, "Triangle" to Marker2dShapeTool.Triangle, "Polygon" to Marker2dShapeTool.Square, "Circle" to Marker2dShapeTool.Circle)) { (label, tool) ->
+            RealGlassChip(label = label, selected = false, accent = arMathCyan, onClick = { onMarker2dShape(tool) })
+        }
+    }
+}
+
+@Composable
+private fun MarkerTransformationToolTray(
+    state: ArViewerUiState,
+    onTool: (MarkerTransformationTool) -> Unit,
+    onProgress: (Float) -> Unit,
+    onTranslationX: (Float) -> Unit,
+    onTranslationY: (Float) -> Unit,
+    onRotationDegrees: (Float) -> Unit,
+    onRotationDirection: () -> Unit,
+    onReflectionLine: (MarkerReflectionLine) -> Unit,
+    onDilationScale: (Float) -> Unit,
+    onHorizontalStretch: (Float) -> Unit,
+    onVerticalStretch: (Float) -> Unit,
+    onShear: (Float) -> Unit,
+    onUndo: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(MarkerTransformationTool.entries) { tool ->
+                RealGlassChip(
+                    label = tool.shortLabel(),
+                    selected = state.markerTransformTool == tool,
+                    accent = if (tool == MarkerTransformationTool.Composite) arMathMint else arMathViolet,
+                    onClick = { onTool(tool) }
+                )
+            }
+            item { RealGlassChip(label = "Undo", selected = false, accent = Color(0xFFFFC857), onClick = onUndo) }
+        }
+        when (state.markerTransformTool) {
+            MarkerTransformationTool.Translation -> {
+                MarkerSlider("X", state.markerTranslationX, -0.3f, 0.3f, onTranslationX)
+                MarkerSlider("Y", state.markerTranslationY, -0.3f, 0.3f, onTranslationY)
+            }
+            MarkerTransformationTool.Rotation -> {
+                MarkerSlider("Angle", state.markerRotationDegrees, -180f, 180f, onRotationDegrees)
+                RealGlassChip(
+                    label = if (state.markerRotationClockwise) "Clockwise" else "Anticlockwise",
+                    selected = true,
+                    accent = arMathMint,
+                    onClick = onRotationDirection
+                )
+            }
+            MarkerTransformationTool.Reflection -> {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    items(MarkerReflectionLine.entries) { line ->
+                        RealGlassChip(
+                            label = line.shortLabel(),
+                            selected = state.markerReflectionLine == line,
+                            accent = arMathCyan,
+                            onClick = { onReflectionLine(line) }
+                        )
+                    }
+                }
+            }
+            MarkerTransformationTool.Dilation -> MarkerSlider("Scale", state.markerDilationScale, 0.2f, 2.6f, onDilationScale)
+            MarkerTransformationTool.HorizontalStretch -> MarkerSlider("Horizontal", state.markerHorizontalStretch, 0.2f, 2.8f, onHorizontalStretch)
+            MarkerTransformationTool.VerticalStretch -> MarkerSlider("Vertical", state.markerVerticalStretch, 0.2f, 2.8f, onVerticalStretch)
+            MarkerTransformationTool.Shear -> MarkerSlider("Shear", state.markerShear, -1.4f, 1.4f, onShear)
+            MarkerTransformationTool.Composite -> {
+                MarkerSlider("Rotation", state.markerRotationDegrees, -180f, 180f, onRotationDegrees)
+                MarkerSlider("Scale", state.markerDilationScale, 0.2f, 2.6f, onDilationScale)
+                MarkerSlider("X", state.markerTranslationX, -0.3f, 0.3f, onTranslationX)
+            }
+        }
+        MarkerSlider("Animate", state.markerTransformProgress, 0f, 1f, onProgress, valueFormatter = { "${(it * 100f).toInt()}%" })
+        Text(
+            transformationMatrixLabel(state),
+            color = arMathMint,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun MarkerMeasurementChallengeTray(
+    onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onMarker3dObject: (String) -> Unit
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        items(
+            listOf(
+                "Distance" to { onMarker2dShape(Marker2dShapeTool.Line) },
+                "Slope" to { onMarker2dShape(Marker2dShapeTool.Line) },
+                "Angle" to { onMarker2dShape(Marker2dShapeTool.Triangle) },
+                "Area" to { onMarker2dShape(Marker2dShapeTool.Square) },
+                "Perimeter" to { onMarker2dShape(Marker2dShapeTool.Square) },
+                "Volume" to { onMarker3dObject("cube") }
+            )
+        ) { (label, action) ->
+            RealGlassChip(label = label, selected = label == "Distance", accent = arMathMint, onClick = action)
+        }
+    }
+}
+
+@Composable
+private fun MarkerTrigonometryToolTray(state: ArViewerUiState, onMarkerTrigAngle: (Float) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        MarkerSlider("Angle", state.markerTrigAngleDegrees, 0f, 360f, onMarkerTrigAngle) { "${it.toInt()} deg" }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(listOf(0f, 30f, 45f, 60f, 90f, 180f, 270f, 360f)) { angle ->
+                RealGlassChip(
+                    label = "${angle.toInt()}",
+                    selected = abs(state.markerTrigAngleDegrees - angle) < 0.5f,
+                    accent = arMathCyan,
+                    onClick = { onMarkerTrigAngle(angle) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkerSlider(
+    label: String,
+    value: Float,
+    minValue: Float,
+    maxValue: Float,
+    onValue: (Float) -> Unit,
+    valueFormatter: (Float) -> String = { "%.2f".format(it) }
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.width(72.dp))
+        Slider(
+            value = rangeToSlider(value, minValue, maxValue),
+            onValueChange = { onValue(sliderToRange(it, minValue, maxValue)) },
+            modifier = Modifier.weight(1f)
+        )
+        Text(valueFormatter(value), style = MaterialTheme.typography.labelSmall, color = arMathMint, modifier = Modifier.width(54.dp))
+    }
+}
+
+private fun MarkerMathActivity.shortLabel(): String = when (this) {
+    MarkerMathActivity.Geometry2D -> "2D"
+    MarkerMathActivity.Geometry3D -> "3D"
+    MarkerMathActivity.FunctionGraph -> "Graph"
+    MarkerMathActivity.CoordinateLab -> "Coord"
+    MarkerMathActivity.Transformations -> "Transform"
+    MarkerMathActivity.MeasurementLab -> "Measure"
+    MarkerMathActivity.Trigonometry -> "Trig"
+}
+
+private fun markerGraphPaletteColor(index: Int): Color =
+    listOf(
+        Color(0xFF58F2C2),
+        Color(0xFFA45CFF),
+        Color(0xFF42E8FF),
+        Color(0xFFFFC857),
+        Color(0xFFFF6B8A),
+        Color(0xFF74FF8B)
+    )[index.floorMod(6)]
+
+private fun MarkerTransformationTool.shortLabel(): String = when (this) {
+    MarkerTransformationTool.Translation -> "Translate"
+    MarkerTransformationTool.Rotation -> "Rotate"
+    MarkerTransformationTool.Reflection -> "Reflect"
+    MarkerTransformationTool.Dilation -> "Dilate"
+    MarkerTransformationTool.HorizontalStretch -> "H Stretch"
+    MarkerTransformationTool.VerticalStretch -> "V Stretch"
+    MarkerTransformationTool.Shear -> "Shear"
+    MarkerTransformationTool.Composite -> "Composite"
+}
+
+private fun MarkerReflectionLine.shortLabel(): String = when (this) {
+    MarkerReflectionLine.XAxis -> "x-axis"
+    MarkerReflectionLine.YAxis -> "y-axis"
+    MarkerReflectionLine.YEqualsX -> "y=x"
+    MarkerReflectionLine.YEqualsNegativeX -> "y=-x"
+    MarkerReflectionLine.UserLine -> "custom"
+}
+
+private fun rangeToSlider(value: Float, minValue: Float, maxValue: Float): Float =
+    ((value - minValue) / (maxValue - minValue)).coerceIn(0f, 1f)
+
+private fun sliderToRange(value: Float, minValue: Float, maxValue: Float): Float =
+    minValue + value.coerceIn(0f, 1f) * (maxValue - minValue)
+
+private fun transformationMatrixLabel(state: ArViewerUiState): String = when (state.markerTransformTool) {
+    MarkerTransformationTool.Translation -> "T = [1 0 ${"%.2f".format(state.markerTranslationX)}; 0 1 ${"%.2f".format(state.markerTranslationY)}; 0 0 1]"
+    MarkerTransformationTool.Rotation -> "R(${state.markerRotationDegrees.toInt()} deg)"
+    MarkerTransformationTool.Reflection -> "Reflect over ${state.markerReflectionLine.shortLabel()}"
+    MarkerTransformationTool.Dilation -> "D = ${"%.2f".format(state.markerDilationScale)}I"
+    MarkerTransformationTool.HorizontalStretch -> "Sx = ${"%.2f".format(state.markerHorizontalStretch)}"
+    MarkerTransformationTool.VerticalStretch -> "Sy = ${"%.2f".format(state.markerVerticalStretch)}"
+    MarkerTransformationTool.Shear -> "H = [1 ${"%.2f".format(state.markerShear)}; 0 1]"
+    MarkerTransformationTool.Composite -> "Composite: rotate -> scale -> translate"
+}
+
+@Composable
+private fun QuietActionButton(label: String, contentDescription: String, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick),
+        color = Color.White.copy(alpha = 0.14f),
+        shape = MaterialTheme.shapes.small
+    ) {
+        Text(
+            label,
+            modifier = Modifier
+                .semantics { this.contentDescription = contentDescription }
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun MinimalMarkerTopBar(
+    title: String,
+    subtitle: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MinimalRoundButton(label = "<", contentDescription = "Back", onClick = onBack)
+        Surface(
+            color = Color.Black.copy(alpha = 0.42f),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f), maxLines = 1)
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.28f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(Modifier.size(9.dp).clip(CircleShape).background(arMathMint))
+        }
+    }
+}
+
+@Composable
+private fun MinimalMarkerConceptChip(
+    label: String,
+    formula: String,
+    markerId: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = 0.38f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, arMathCyan.copy(alpha = 0.22f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(markerId, color = arMathMint, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Column {
+                Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(formattedMathExpression(formula), color = arMathCyan, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkerExpressionEditor(
+    state: ArViewerUiState,
+    markerId: String,
+    lessonTitle: String,
+    focus: MarkerLessonElement?,
+    onLiveEquation: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color.Black.copy(alpha = 0.42f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, arMathCyan.copy(alpha = 0.18f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(9.dp).clip(CircleShape).background(arMathMint))
+                Text(markerId, color = arMathMint, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                Text(lessonTitle, color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
+            OutlinedTextField(
+                value = state.liveEquation,
+                onValueChange = onLiveEquation,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text(focus?.label ?: "Expression") },
+                supportingText = focus?.formula?.let { formula ->
+                    { Text(formattedMathExpression(formula), color = arMathCyan) }
+                },
+                textStyle = MaterialTheme.typography.titleMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MarkerGraphControlPanel(
+    state: ArViewerUiState,
+    onGraphColorMap: (GraphColorMap) -> Unit,
+    onFunction3dTransform: (Function3dTransformMode) -> Unit,
+    onAnimationProgress: (Float) -> Unit,
+    onSlicePosition: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color.Black.copy(alpha = 0.34f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.11f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                items(Function3dTransformMode.entries) { mode ->
+                    RealGlassChip(
+                        label = mode.label(),
+                        selected = state.function3dTransformMode == mode,
+                        onClick = { onFunction3dTransform(mode) }
+                    )
+                }
+                items(GraphColorMap.entries) { map ->
+                    RealGlassChip(
+                        label = map.label(),
+                        selected = state.graphColorMap == map,
+                        accent = when (map) {
+                            GraphColorMap.Height -> arMathViolet
+                            GraphColorMap.Slope -> arMathMint
+                            GraphColorMap.Curvature -> Color(0xFFFFB86B)
+                            GraphColorMap.XValue -> arMathCyan
+                            GraphColorMap.YValue -> Color(0xFFFF6B8A)
+                        },
+                        onClick = { onGraphColorMap(map) }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Slice", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f))
+                Slider(
+                    value = state.graphSlicePosition,
+                    onValueChange = onSlicePosition,
+                    modifier = Modifier.weight(1f)
+                )
+                Text("${(state.graphSlicePosition * 100f).toInt()}%", style = MaterialTheme.typography.labelSmall, color = arMathMint)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Animate", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f))
+                Slider(
+                    value = state.graphAnimationProgress,
+                    onValueChange = onAnimationProgress,
+                    modifier = Modifier.weight(1f)
+                )
+                Text("${(state.graphAnimationProgress * 100f).toInt()}%", style = MaterialTheme.typography.labelSmall, color = arMathViolet)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RealGlassChip(
+    label: String,
+    selected: Boolean,
+    accent: Color = arMathViolet,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .height(38.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+        color = if (selected) accent.copy(alpha = 0.62f) else Color.White.copy(alpha = 0.08f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, if (selected) accent.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.12f))
+    ) {
+        Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun MinimalMarkerControls(
+    zoomPercent: Int,
+    expanded: Boolean,
+    onZoomOut: () -> Unit,
+    onZoomIn: () -> Unit,
+    onRotateLeft: () -> Unit,
+    onRotateRight: () -> Unit,
+    onNext: () -> Unit,
+    onExpand: () -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = 0.44f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            MinimalRoundButton("-", "Zoom out", onZoomOut)
+            MinimalRoundButton("+", "Zoom in", onZoomIn)
+            MinimalRoundButton("L", "Rotate left", onRotateLeft)
+            MinimalRoundButton("R", "Rotate right", onRotateRight)
+            MinimalRoundButton("Next", "Next concept", onNext, wide = true, selected = true)
+            MinimalRoundButton(if (expanded) "Fit" else "Max", "Expand or fit", onExpand, wide = true)
+            MinimalRoundButton("Reset", "Reset marker lesson", onReset, wide = true)
+            Text("$zoomPercent%", color = arMathMint, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun MinimalScanHint(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = 0.34f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.size(9.dp).clip(CircleShape).background(Color(0xFFFFB86B)))
+            Text("Point camera at a marker", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun MinimalRoundButton(
+    label: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+    wide: Boolean = false,
+    selected: Boolean = false
+) {
+    Surface(
+        modifier = Modifier
+            .height(42.dp)
+            .width(if (wide) 68.dp else 42.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .semantics { this.contentDescription = contentDescription },
+        color = if (selected) arMathPurple.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.10f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, if (selected) arMathViolet.copy(alpha = 0.62f) else Color.White.copy(alpha = 0.12f))
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun GlassPanel(
+    modifier: Modifier = Modifier,
+    cornerRadius: androidx.compose.ui.unit.Dp = 24.dp,
+    selected: Boolean = false,
+    disabled: Boolean = false,
+    error: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    val borderColor = when {
+        error -> Color(0xFFFF6B8A).copy(alpha = 0.42f)
+        selected -> arMathViolet.copy(alpha = 0.58f)
+        disabled -> Color.White.copy(alpha = 0.07f)
+        else -> arMathBorder
+    }
+    Surface(
+        modifier = modifier
+            .border(
+                width = 1.dp,
+                brush = Brush.linearGradient(listOf(borderColor, Color.White.copy(alpha = 0.05f))),
+                shape = RoundedCornerShape(cornerRadius)
+            ),
+        color = arMathGlass.copy(alpha = if (disabled) 0.34f else 0.58f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(cornerRadius),
+        tonalElevation = 0.dp,
+        shadowElevation = if (selected) 10.dp else 2.dp
+    ) {
+        Box(Modifier.padding(10.dp)) { content() }
+    }
+}
+
+@Composable
+private fun GlassIconButton(
+    label: String,
+    contentDescription: String,
+    selected: Boolean = false,
+    disabled: Boolean = false,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .size(52.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(enabled = !disabled, onClick = onClick)
+            .semantics { this.contentDescription = contentDescription },
+        color = if (selected) arMathPurple.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.10f),
+        contentColor = if (disabled) Color.White.copy(alpha = 0.32f) else Color.White,
+        border = BorderStroke(1.dp, if (selected) arMathViolet.copy(alpha = 0.65f) else arMathBorder),
+        shape = RoundedCornerShape(18.dp),
+        shadowElevation = if (selected) 10.dp else 1.dp
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun ArMathTopHeader(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        GlassIconButton(label = "≡", contentDescription = "Menu", onClick = onBack)
+        GlassPanel(cornerRadius = 24.dp) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Brush.linearGradient(listOf(arMathPurple, arMathCyan))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("AR", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black)
+                }
+                Column {
+                    Text("AR Math", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Learn • Visualize • Solve", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GlassIconButton(label = "?", contentDescription = "Help", onClick = {})
+            GlassIconButton(label = "⚙", contentDescription = "Settings", onClick = {})
+        }
+    }
+}
+
+@Composable
+private fun NeonSegmentedControl(
+    items: List<String>,
+    selected: String,
+    modifier: Modifier = Modifier,
+    onSelected: (String) -> Unit = {}
+) {
+    GlassPanel(modifier = modifier, cornerRadius = 28.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            items.forEach { item ->
+                val active = item == selected
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(22.dp))
+                        .clickable { onSelected(item) },
+                    color = if (active) Color.Transparent else Color.Transparent,
+                    shape = RoundedCornerShape(22.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                if (active) Brush.horizontalGradient(listOf(arMathPurple, arMathViolet)) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)),
+                                RoundedCornerShape(22.dp)
+                            )
+                            .padding(horizontal = 22.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(item, color = if (active) Color.White else Color.White.copy(alpha = 0.76f), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MathCategoryRail(selected: String, modifier: Modifier = Modifier) {
+    val categories = listOf(
+        Triple("A", "Algebra", "x²"),
+        Triple("G", "Geometry", "△"),
+        Triple("T", "Trig", "~"),
+        Triple("F", "Functions", "ƒ"),
+        Triple("C", "Coord", "(x,y)"),
+        Triple("M", "Measure", "π"),
+        Triple("More", "More", "•••")
+    )
+    GlassPanel(modifier = modifier, cornerRadius = 24.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            categories.forEach { (id, label, icon) ->
+                val active = id == selected
+                Column(
+                    modifier = Modifier
+                        .width(64.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(if (active) arMathPurple.copy(alpha = 0.58f) else Color.White.copy(alpha = 0.06f))
+                        .border(1.dp, if (active) arMathViolet.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+                        .padding(vertical = 7.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(icon, color = if (active) Color.White else Color.White.copy(alpha = 0.82f), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                    Text(label, color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ARControlRail(
+    zoomPercent: Int,
+    expanded: Boolean,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onRotateLeft: () -> Unit,
+    onRotateRight: () -> Unit,
+    onExpand: () -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    GlassPanel(modifier = modifier, cornerRadius = 24.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            GlassIconButton("3D", "3D view", selected = true, onClick = {})
+            GlassIconButton("2D", "2D view", onClick = onExpand)
+            GlassIconButton("AR", "AR view", selected = true, onClick = {})
+            GlassIconButton("Grid", "Grid", onClick = onZoomOut)
+            GlassIconButton("Layer", "Layers", selected = expanded, onClick = onExpand)
+            GlassIconButton("R", "Reset", onClick = onReset)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MiniGlassButton("+", "Zoom in", onZoomIn)
+                MiniGlassButton("-", "Zoom out", onZoomOut)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MiniGlassButton("L", "Rotate left", onRotateLeft)
+                MiniGlassButton("R", "Rotate right", onRotateRight)
+            }
+            Text("$zoomPercent%", color = arMathMint, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun MiniGlassButton(label: String, contentDescription: String, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .clickable(onClick = onClick)
+            .semantics { this.contentDescription = contentDescription },
+        color = Color.White.copy(alpha = 0.10f),
+        contentColor = Color.White,
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        shape = RoundedCornerShape(11.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun RecognizedExpressionCard(
+    title: String,
+    expression: String,
+    subtitle: String,
+    recognized: Boolean,
+    confidence: Int,
+    modifier: Modifier = Modifier
+) {
+    GlassPanel(modifier = modifier.fillMaxWidth(), cornerRadius = 24.dp, selected = recognized) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(if (recognized) arMathMint else Color(0xFFFFB86B)))
+                Text(title, color = Color.White.copy(alpha = 0.84f), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                Text("${confidence.coerceIn(0, 100)}%", color = Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.labelSmall)
+                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy", tint = Color.White.copy(alpha = 0.78f), modifier = Modifier.size(18.dp))
+            }
+            Text(subtitle, color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall)
+            Text(
+                formattedMathExpression(expression),
+                color = Color.White,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun ARObjectLabel(label: String, formula: String, modifier: Modifier = Modifier) {
+    GlassPanel(modifier = modifier, cornerRadius = 22.dp, selected = true) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(formattedMathExpression(formula), color = arMathCyan, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun MathInsightCard(title: String, rows: List<Pair<String, String>>, modifier: Modifier = Modifier) {
+    GlassPanel(modifier = modifier.width(220.dp), cornerRadius = 22.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            rows.forEach { (key, value) ->
+                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    Text(key, color = Color.White.copy(alpha = 0.66f), style = MaterialTheme.typography.labelSmall)
+                    Text(value, color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SolutionStepsCard(state: ArViewerUiState, modifier: Modifier = Modifier) {
+    val elements = state.markerLessonInteraction.elements.take(5)
+    MathInsightCard(
+        title = "Solution Steps",
+        rows = elements.mapIndexed { index, element -> "${index + 1}" to "${element.label}: ${element.formula.orEmpty()}" },
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun GraphInsightCard(state: ArViewerUiState, modifier: Modifier = Modifier) {
+    val focus = state.markerLessonInteraction.focusedElement
+    MathInsightCard(
+        title = "Graph Insights",
+        rows = listOf(
+            "Marker" to (state.activeMarkerLessonId ?: "Scanning"),
+            "Type" to markerCategoryName(state.activeMarkerLessonId),
+            "Focus" to (focus?.label ?: "None"),
+            "Rule" to (focus?.formula ?: "Lock marker"),
+            "View" to if (state.markerLessonInteraction.expanded) "Expanded" else "Fit"
+        ),
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun EquationTileTray(
+    elements: List<MarkerLessonElement>,
+    focusedIndex: Int,
+    modifier: Modifier = Modifier
+) {
+    if (elements.isEmpty()) return
+    GlassPanel(modifier = modifier, cornerRadius = 22.dp) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(elements.take(8)) { element ->
+                EquationTile(
+                    text = element.formula ?: element.label,
+                    selected = element == elements.getOrNull(focusedIndex)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomGlassNavigation() {
+    GlassPanel(cornerRadius = 28.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalAlignment = Alignment.CenterVertically) {
+            listOf("Home", "History", "Camera", "Saved", "Profile").forEach { item ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (item == "Camera") "[] " else "•", color = if (item == "Camera") arMathViolet else Color.White.copy(alpha = 0.55f))
+                    Text(item, color = if (item == "Camera") Color.White else Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EquationTile(text: String, modifier: Modifier = Modifier, selected: Boolean = false) {
+    GlassPanel(modifier = modifier, cornerRadius = 16.dp, selected = selected) {
+        Text(formattedMathExpression(text), color = if (selected) arMathMint else Color.White, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun AngleSlider(angle: Float, modifier: Modifier = Modifier, onAngle: (Float) -> Unit = {}) {
+    GlassPanel(modifier = modifier, cornerRadius = 22.dp) {
+        Column {
+            Text("Angle ${angle.toInt()} deg", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Slider(value = angle, onValueChange = onAngle, valueRange = 0f..360f)
+        }
+    }
+}
+
+@Composable
+private fun GraphLegend(items: List<Pair<String, Color>>, modifier: Modifier = Modifier) {
+    GlassPanel(modifier = modifier, cornerRadius = 18.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items.forEach { (label, color) ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+                    Text(label, color = Color.White.copy(alpha = 0.82f), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExpandableAnalysisPanel(title: String, expanded: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    GlassPanel(modifier = modifier, cornerRadius = 22.dp, selected = expanded) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, color = Color.White, fontWeight = FontWeight.Bold)
+            if (expanded) content()
+        }
+    }
+}
+
+private fun formattedMathExpression(text: String) = buildAnnotatedString {
+    var exponent = false
+    text.forEach { char ->
+        when (char) {
+            '^' -> exponent = true
+            else -> {
+                if (exponent) {
+                    withStyle(SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 14.sp)) { append(char) }
+                    exponent = false
+                } else {
+                    append(char)
+                }
+            }
+        }
+    }
+}
+
+private fun markerCategoryName(markerId: String?): String =
+    when (markerId?.take(1)) {
+        "A" -> "Algebra"
+        "G" -> "Geometry"
+        "C" -> "Coordinate"
+        "F" -> "Function"
+        "M" -> "Mensuration"
+        else -> "Marker AR"
+    }
+
+@Composable
+private fun QuietMarkerCard(
+    markerId: String,
+    locked: Boolean
+) {
+    val context = LocalContext.current
+    val bitmap = remember(markerId) {
+        runCatching {
+            context.assets.open("ar_markers/geometry/$markerId.png").use { BitmapFactory.decodeStream(it) }
+        }.getOrNull()
+    }
+    Column(
+        modifier = Modifier
+            .width(78.dp)
+            .clip(MaterialTheme.shapes.small)
+            .background(if (locked) Color(0xFF16A34A).copy(alpha = 0.88f) else Color.White.copy(alpha = 0.14f))
+            .padding(5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = markerId,
+                modifier = Modifier
+                    .size(58.dp)
+                    .clip(MaterialTheme.shapes.small),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(58.dp)
+                    .background(Color.White.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(markerId, color = Color.White, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        Text(
+            text = markerId,
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
 }
 
 @Composable
@@ -3926,7 +5885,7 @@ private fun MathInteractionOverlay(state: ArViewerUiState) {
                 shape = MaterialTheme.shapes.small
             ) {
                 Text(
-                    if (state.paperGraph?.hasLockedTarget == true) "Paper graph locked" else "Scan graph paper",
+                    if (state.paperGraph?.hasLockedTarget == true) "Marker locked" else "Scan a geometry marker",
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     style = MaterialTheme.typography.labelLarge
@@ -4578,8 +6537,8 @@ private fun statusText(state: ArViewerUiState): String =
         state.placementHitKind == PlacementHitKind.DepthPoint -> "Depth surface found - tap to place"
         state.placementHitKind == PlacementHitKind.FeaturePoint -> "Air point found - tap to place"
         state.placementHitKind == PlacementHitKind.Instant -> "Air placement ready - tap to place"
-        state.arEngineMode == ArEngineMode.PaperGraph && state.paperGraph?.hasLockedTarget == true -> "Paper graph locked - build in 3D"
-        state.arEngineMode == ArEngineMode.PaperGraph -> "Scan a worksheet or graph target"
+        state.arEngineMode == ArEngineMode.PaperGraph && state.paperGraph?.hasLockedTarget == true -> "Marker locked - place 3D shapes"
+        state.arEngineMode == ArEngineMode.PaperGraph -> "Scan G01 geometry marker"
         state.arEngineMode == ArEngineMode.OutdoorGeospatialMath -> "Scan outdoor buildings or terrain"
         else -> "Move your phone slowly to place on a surface or in air"
     }

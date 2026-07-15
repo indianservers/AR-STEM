@@ -48,7 +48,7 @@ fun AiStemApp() {
                 SubjectSelectionScreen(
                     onBack = { navController.popBackStack() },
                     onMathematics = {
-                        navController.navigate(AppDestination.Mathematics.route) {
+                        navController.navigate(AppDestination.ArViewer.route) {
                             launchSingleTop = true
                         }
                     },

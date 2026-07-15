@@ -62,6 +62,7 @@ import com.indianservers.ai_stem.feature.games.api.GameHeroArtwork
 import com.indianservers.ai_stem.feature.games.api.GameHowToPlay
 import com.indianservers.ai_stem.feature.games.api.GamePlayerMode
 import com.indianservers.ai_stem.feature.games.catalog.GamesCatalog
+import com.indianservers.ai_stem.feature.games.interaction.TopArEnhancementRegistry
 
 @Composable
 fun GamesLibraryScreen(
@@ -91,6 +92,9 @@ fun GamesLibraryScreen(
                 Text("Six catalog-driven mathematics AR games. Play what is verified, preview what is coming next.", style = MaterialTheme.typography.bodyMedium)
             }
             item {
+                SharedArEnhancementsCard()
+            }
+            item {
                 TournamentHubCard(onOpen = onOpenTournamentHub)
             }
             item {
@@ -104,6 +108,24 @@ fun GamesLibraryScreen(
                     onHowToPlay = { onHowToPlay(game) },
                     onComingSoon = { onComingSoon(game) }
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SharedArEnhancementsCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("shared-ar-enhancements-card"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Shared AR Engine Upgrades", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("These interaction systems are available to every Maths AR game.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TopArEnhancementRegistry.labels.take(3).forEach { label -> BadgePill(label) }
+                BadgePill("+2 more")
             }
         }
     }
@@ -416,15 +438,12 @@ private fun GameLibraryCard(
                 }
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                game.playerModes.forEach { BadgePill(it.label()) }
+                game.playerModes.take(1).forEach { BadgePill(it.label()) }
                 BadgePill(game.arRequirement.label())
-                if (game.localWifiSupported) BadgePill("Local Wi-Fi")
                 if (game.outdoorRequired) BadgePill("Outdoor")
-                if (game.openMapRequired) BadgePill("Open Map")
-                BadgePill(game.availability.label())
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                game.supportedTopics.take(5).forEach { TopicPill(it) }
+                game.supportedTopics.take(3).forEach { TopicPill(it) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Groups, contentDescription = null)

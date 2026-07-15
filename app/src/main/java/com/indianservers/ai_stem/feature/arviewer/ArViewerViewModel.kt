@@ -30,7 +30,12 @@ import com.indianservers.ai_stem.domain.graph.ArMathEngine
 import com.indianservers.ai_stem.domain.graph.GraphQualityPreset
 import com.indianservers.ai_stem.domain.graph.GraphSlider
 import com.indianservers.ai_stem.domain.geometry.ConstructionConstraintKind
+import com.indianservers.ai_stem.domain.geometry.ConstructionDependencyKind
 import com.indianservers.ai_stem.domain.geometry.ConstructionGeometryEngine
+import com.indianservers.ai_stem.domain.geometry.ConstructionGeometryState
+import com.indianservers.ai_stem.domain.geometry.ConstructionObject
+import com.indianservers.ai_stem.domain.geometry.ConstructionObjectKind
+import com.indianservers.ai_stem.domain.geometry.ConstructionPoint
 import com.indianservers.ai_stem.domain.interaction.ArGestureHandle
 import com.indianservers.ai_stem.domain.interaction.ArInteractionEngine
 import com.indianservers.ai_stem.domain.interaction.ArSnappingProfile
@@ -46,10 +51,14 @@ import com.indianservers.ai_stem.domain.scene.ArPerformanceProfile
 import com.indianservers.ai_stem.domain.scene.ArSceneProductionSettings
 import com.indianservers.ai_stem.domain.scene.ArSceneShareExporter
 import com.indianservers.ai_stem.domain.scene.ArSceneTemplates
+import com.indianservers.ai_stem.domain.scene.ObjectTransform
 import com.indianservers.ai_stem.domain.scene.PersistentAnchorKind
 import com.indianservers.ai_stem.domain.scene.PersistentAnchorRecord
 import com.indianservers.ai_stem.domain.scene.SceneInteractionMode
 import com.indianservers.ai_stem.domain.scene.SceneMutations
+import com.indianservers.ai_stem.domain.scene.Shape3dAnchorMode
+import com.indianservers.ai_stem.domain.scene.Shape3dEngine
+import com.indianservers.ai_stem.domain.scene.Shape3dPlacementRequest
 import com.indianservers.ai_stem.domain.scene.SnapshotSceneCommand
 import com.indianservers.ai_stem.domain.scene.TransformMovement
 import com.indianservers.ai_stem.domain.scene.TransformRotation
@@ -162,7 +171,7 @@ class ArViewerViewModel : ViewModel() {
                 userMessage = UiMessage(
                     when (mode) {
                         ArEngineMode.Indoor -> "Indoor AR mode. Scan a table or floor for math placement."
-                        ArEngineMode.PaperGraph -> "Paper Graph mode. Point at a worksheet or calibrated graph target."
+                        ArEngineMode.PaperGraph -> "Marker-Based AR. Point at the G01 geometry marker."
                         ArEngineMode.AirPlacement -> "Air Placement mode. Tap open space, then move slowly to refine."
                         ArEngineMode.SurfacePlacement -> "Surface Placement mode. Aim at a stable real surface."
                         ArEngineMode.OutdoorGeospatialMath -> "Outdoor Geospatial Math. Scan buildings or terrain outside."
@@ -203,6 +212,181 @@ class ArViewerViewModel : ViewModel() {
                 selectedDefinitionId = definition.definitionId,
                 sceneInteractionMode = SceneInteractionMode.Place,
                 userMessage = UiMessage("Tap a surface or open space to place the ${definition.displayName.lowercase()}.")
+            )
+        }
+    }
+
+    fun selectMarkerMathActivity(activity: MarkerMathActivity) {
+        _uiState.update {
+            val nextEquation = if (activity == MarkerMathActivity.FunctionGraph && it.liveEquation == "y = sin(x)" && it.markerGraphFunctions.isEmpty()) "" else it.liveEquation
+            it.copy(
+                markerMathActivity = activity,
+                liveEquation = nextEquation,
+                compiledArExpression = arMathEngine.compile(nextEquation),
+                selectedObjectType = when (activity) {
+                    MarkerMathActivity.Geometry2D,
+                    MarkerMathActivity.CoordinateLab,
+                    MarkerMathActivity.Transformations,
+                    MarkerMathActivity.MeasurementLab,
+                    MarkerMathActivity.Trigonometry -> MathObjectType.Triangle
+                    MarkerMathActivity.Geometry3D -> MathObjectType.Cube
+                    MarkerMathActivity.FunctionGraph -> MathObjectType.SineCurve
+                },
+                selectedDefinitionId = when (activity) {
+                    MarkerMathActivity.Geometry2D,
+                    MarkerMathActivity.CoordinateLab,
+                    MarkerMathActivity.Transformations,
+                    MarkerMathActivity.MeasurementLab,
+                    MarkerMathActivity.Trigonometry -> "triangle"
+                    MarkerMathActivity.Geometry3D -> "cube"
+                    MarkerMathActivity.FunctionGraph -> "sine-curve"
+                },
+                sceneInteractionMode = SceneInteractionMode.Place,
+                userMessage = UiMessage(if (activity == MarkerMathActivity.FunctionGraph) "Graph workspace ready. Enter a function and tap Add." else "${activity.label()} selected.")
+            )
+        }
+    }
+
+    fun selectMarkerTransformationTool(tool: MarkerTransformationTool) {
+        _uiState.update {
+            it.copy(
+                markerMathActivity = MarkerMathActivity.Transformations,
+                markerTransformTool = tool,
+                markerTransformProgress = 1f,
+                userMessage = UiMessage("${tool.label()} ready.")
+            )
+        }
+    }
+
+    fun setMarkerTransformProgress(progress: Float) {
+        _uiState.update {
+            it.copy(markerMathActivity = MarkerMathActivity.Transformations, markerTransformProgress = progress.coerceIn(0f, 1f))
+        }
+    }
+
+    fun setMarkerTranslationX(value: Float) {
+        _uiState.update { it.copy(markerTranslationX = value.coerceIn(-0.28f, 0.28f)) }
+    }
+
+    fun setMarkerTranslationY(value: Float) {
+        _uiState.update { it.copy(markerTranslationY = value.coerceIn(-0.28f, 0.28f)) }
+    }
+
+    fun setMarkerRotationDegrees(value: Float) {
+        _uiState.update { it.copy(markerRotationDegrees = value.coerceIn(-180f, 180f)) }
+    }
+
+    fun toggleMarkerRotationDirection() {
+        _uiState.update { it.copy(markerRotationClockwise = !it.markerRotationClockwise) }
+    }
+
+    fun setMarkerReflectionLine(line: MarkerReflectionLine) {
+        _uiState.update { it.copy(markerReflectionLine = line, markerTransformTool = MarkerTransformationTool.Reflection, markerMathActivity = MarkerMathActivity.Transformations) }
+    }
+
+    fun setMarkerDilationScale(value: Float) {
+        _uiState.update { it.copy(markerDilationScale = value.coerceIn(0.2f, 2.6f)) }
+    }
+
+    fun setMarkerHorizontalStretch(value: Float) {
+        _uiState.update { it.copy(markerHorizontalStretch = value.coerceIn(0.2f, 2.6f)) }
+    }
+
+    fun setMarkerVerticalStretch(value: Float) {
+        _uiState.update { it.copy(markerVerticalStretch = value.coerceIn(0.2f, 2.6f)) }
+    }
+
+    fun setMarkerShear(value: Float) {
+        _uiState.update { it.copy(markerShear = value.coerceIn(-1.2f, 1.2f)) }
+    }
+
+    fun undoMarkerTransformation() {
+        _uiState.update {
+            it.copy(
+                markerTransformProgress = 0f,
+                markerTranslationX = 0.16f,
+                markerTranslationY = 0.1f,
+                markerRotationDegrees = 45f,
+                markerRotationClockwise = false,
+                markerReflectionLine = MarkerReflectionLine.YAxis,
+                markerDilationScale = 1.4f,
+                markerHorizontalStretch = 1.4f,
+                markerVerticalStretch = 0.7f,
+                markerShear = 0.45f,
+                userMessage = UiMessage("Transformation reset.")
+            )
+        }
+    }
+
+    fun setMarkerTrigAngle(value: Float) {
+        _uiState.update { it.copy(markerMathActivity = MarkerMathActivity.Trigonometry, markerTrigAngleDegrees = value.coerceIn(0f, 360f)) }
+    }
+
+    fun addMarker2dShape(shape: Marker2dShapeTool) {
+        _uiState.update { state ->
+            val construction = when (shape) {
+                Marker2dShapeTool.Point -> state.constructionGeometry.addMarkerPoint()
+                Marker2dShapeTool.Line -> state.constructionGeometry.addMarkerLine()
+                Marker2dShapeTool.Segment -> state.constructionGeometry.addMarkerLine()
+                Marker2dShapeTool.Ray -> state.constructionGeometry.addMarkerLine()
+                Marker2dShapeTool.Triangle -> state.constructionGeometry.addMarkerTriangle()
+                Marker2dShapeTool.Square -> state.constructionGeometry.addMarkerSquare()
+                Marker2dShapeTool.Rectangle -> state.constructionGeometry.addMarkerSquare()
+                Marker2dShapeTool.Circle -> state.constructionGeometry.addMarkerCircle()
+                Marker2dShapeTool.Ellipse -> state.constructionGeometry.addMarkerCircle()
+                Marker2dShapeTool.Polygon -> state.constructionGeometry.addMarkerSquare()
+                Marker2dShapeTool.RegularPolygon -> state.constructionGeometry.addMarkerSquare()
+                Marker2dShapeTool.Angle -> state.constructionGeometry.addMarkerTriangle()
+                Marker2dShapeTool.Arc -> state.constructionGeometry.addMarkerCircle()
+                Marker2dShapeTool.Perpendicular -> state.constructionGeometry.addMarkerLine()
+                Marker2dShapeTool.Parallel -> state.constructionGeometry.addMarkerLine()
+                Marker2dShapeTool.Clear -> ConstructionGeometryState()
+            }
+            state.copy(
+                markerMathActivity = MarkerMathActivity.Geometry2D,
+                constructionGeometry = construction,
+                resolvedConstructions = constructionEngine.resolve(construction),
+                enabledMathArFeatures = state.enabledMathArFeatures + MathArFeature.MultiObjectConstraints,
+                userMessage = UiMessage(if (shape == Marker2dShapeTool.Clear) "2D geometry cleared." else "${shape.label} added on G01.")
+            )
+        }
+    }
+
+    fun addMarker3dObject(definitionId: String) {
+        val definition = DefaultMathObjectRegistry.getDefinition(definitionId) ?: return
+        val current = _uiState.value
+        val transform = Shape3dEngine.placementPlan(
+            Shape3dPlacementRequest(
+                definitionId = definitionId,
+                anchorMode = Shape3dAnchorMode.MarkerImage,
+                normalizedX = ((current.mathScene.objects.size % 3) - 1) * 0.42,
+                normalizedZ = (current.mathScene.objects.size / 3) * 0.32 - 0.12,
+                snapToGrid = true
+            )
+        ).transform
+        mutate("Add ${definition.displayName}", "${definition.displayName} added on G01.") {
+            SceneMutations.addObject(it, definitionId, transform)
+        }
+        _uiState.update {
+            it.copy(
+                markerMathActivity = MarkerMathActivity.Geometry3D,
+                selectedObjectType = definition.type,
+                selectedDefinitionId = definition.definitionId,
+                sceneInteractionMode = SceneInteractionMode.Select
+            )
+        }
+    }
+
+    fun clearMarkerWorkspace() {
+        val before = _uiState.value.mathScene
+        val after = before.copy(objects = emptyList(), groups = emptyList(), annotations = emptyList(), updatedAt = System.currentTimeMillis())
+        setSceneWithHistory(before, after, "Clear marker workspace", "Marker workspace cleared.")
+        _uiState.update {
+            it.copy(
+                constructionGeometry = ConstructionGeometryState(),
+                resolvedConstructions = emptyList(),
+                pickedPoints = emptyList(),
+                rulerAnchors = emptyList()
             )
         }
     }
@@ -323,7 +507,7 @@ class ArViewerViewModel : ViewModel() {
                     if (it.arEngineMode == ArEngineMode.OutdoorGeospatialMath) {
                         "No building or terrain mesh under the tap yet. Move outside, face a Street View-covered area, and scan slowly."
                     } else {
-                        "No stable flat surface under the tap yet. Move sideways slowly and aim at a textured floor or table."
+                        "No ARCore plane under the tap yet. Aim at a textured floor/table, move the phone in a slow circle, then tap only when the surface highlight appears."
                     }
                 )
             )
@@ -347,13 +531,32 @@ class ArViewerViewModel : ViewModel() {
     }
 
     fun onPaperGraphFrame(frameState: PaperGraphFrameState) {
+        val markerLessonId = frameState.bestLockedTarget?.name?.extractMarkerLessonId()
         _uiState.update {
+            val lessonState = if (markerLessonId != null && markerLessonId != it.activeMarkerLessonId) {
+                markerLessonState(markerLessonId, it)
+            } else {
+                it
+            }
             it.copy(
                 paperGraph = frameState,
+                activeMarkerLessonId = lessonState.activeMarkerLessonId,
+                markerLessonTitle = lessonState.markerLessonTitle,
+                markerLessonSubtitle = lessonState.markerLessonSubtitle,
+                markerLessonInteraction = lessonState.markerLessonInteraction,
+                mathScene = lessonState.mathScene,
+                constructionGeometry = lessonState.constructionGeometry,
+                resolvedConstructions = lessonState.resolvedConstructions,
+                selectedObjectType = lessonState.selectedObjectType,
+                selectedDefinitionId = lessonState.selectedDefinitionId,
+                userMessage = lessonState.userMessage,
                 arDiagnostics = buildList {
-                    addAll(it.arDiagnostics.filterNot { diagnostic -> diagnostic.startsWith("Paper graph") || diagnostic.startsWith("Augmented image") })
-                    add("Paper graph targets: ${frameState.trackedTargets.size}")
-                    add("Paper graph locked: ${frameState.hasLockedTarget}")
+                    addAll(it.arDiagnostics.filterNot { diagnostic -> diagnostic.startsWith("Marker") || diagnostic.startsWith("Augmented image") || diagnostic.startsWith("Paper graph") })
+                    add("Marker targets: ${frameState.trackedTargets.size}")
+                    add("Marker locked: ${frameState.hasLockedTarget}")
+                    frameState.bestLockedTarget?.let { target ->
+                        add("Marker best: ${target.name} score=${target.markerQualityScore}")
+                    }
                     frameState.trackedTargets.firstOrNull()?.let { target ->
                         add("Augmented image: ${target.name} ${"%.2f".format(target.extentX)}m x ${"%.2f".format(target.extentZ)}m ${target.trackingMethod}")
                     }
@@ -362,10 +565,48 @@ class ArViewerViewModel : ViewModel() {
         }
     }
 
+    fun zoomMarkerLesson(delta: Float) {
+        _uiState.update {
+            val next = (it.markerLessonInteraction.zoom * delta).coerceIn(0.55f, 2.8f)
+            it.copy(markerLessonInteraction = it.markerLessonInteraction.copy(zoom = next))
+        }
+    }
+
+    fun rotateMarkerLesson(deltaDegrees: Float) {
+        _uiState.update {
+            it.copy(
+                markerLessonInteraction = it.markerLessonInteraction.copy(
+                    rotationDegrees = com.indianservers.ai_stem.domain.mathematics.normalizeRotationDegrees(
+                        it.markerLessonInteraction.rotationDegrees + deltaDegrees
+                    )
+                )
+            )
+        }
+    }
+
+    fun toggleMarkerLessonExpanded() {
+        _uiState.update {
+            it.copy(markerLessonInteraction = it.markerLessonInteraction.copy(expanded = !it.markerLessonInteraction.expanded))
+        }
+    }
+
+    fun focusNextMarkerLessonElement() {
+        _uiState.update {
+            val count = it.markerLessonInteraction.elements.size.coerceAtLeast(1)
+            it.copy(markerLessonInteraction = it.markerLessonInteraction.copy(focusIndex = (it.markerLessonInteraction.focusIndex + 1) % count))
+        }
+    }
+
+    fun resetMarkerLessonInteraction() {
+        _uiState.update {
+            it.copy(markerLessonInteraction = it.markerLessonInteraction.copy(zoom = 1f, rotationDegrees = 0f, expanded = false, focusIndex = 0, step = 0))
+        }
+    }
+
     fun onPaperGraphCalibrationTap(point: PaperGraphCalibrationPoint) {
         _uiState.update {
             if (it.arEngineMode != ArEngineMode.PaperGraph || it.paperGraph?.hasLockedTarget != true) {
-                return@update it.copy(userMessage = UiMessage("Scan and lock the worksheet target before calibration."))
+                return@update it.copy(userMessage = UiMessage("Scan and lock a geometry marker before calibration."))
             }
             val next = when (it.paperGraphCalibration.step) {
                 PaperGraphCalibrationStep.Origin -> it.paperGraphCalibration.copy(
@@ -445,6 +686,7 @@ class ArViewerViewModel : ViewModel() {
                 qualityPreset = it.arGraphQualityPreset
             )
             it.copy(
+                markerMathActivity = if (it.arEngineMode == ArEngineMode.PaperGraph) MarkerMathActivity.FunctionGraph else it.markerMathActivity,
                 liveEquation = trimmed,
                 compiledArExpression = compiled,
                 compiledComparisonExpression = comparison,
@@ -455,6 +697,188 @@ class ArViewerViewModel : ViewModel() {
                 userMessage = UiMessage(compiled.message)
             )
         }
+    }
+
+    fun addMarkerGraphFunction() {
+        _uiState.update { state ->
+            val source = state.liveEquation.trim()
+            if (source.isBlank()) {
+                return@update state.copy(userMessage = UiMessage("Enter a function first."))
+            }
+            val compiled = arMathEngine.compile(
+                source = source,
+                existingSliders = state.arGraphSliders,
+                domain = state.arGraphDomain,
+                qualityPreset = state.arGraphQualityPreset
+            )
+            if (!compiled.isValid) {
+                return@update state.copy(userMessage = UiMessage(compiled.message))
+            }
+            val id = "marker-graph-${System.currentTimeMillis()}-${state.markerGraphFunctions.size}"
+            val graph = MarkerGraphFunctionState(
+                id = id,
+                source = source,
+                compiled = compiled,
+                sliders = compiled.parameters,
+                selected = true,
+                colorIndex = state.markerGraphFunctions.size
+            )
+            state.copy(
+                markerMathActivity = MarkerMathActivity.FunctionGraph,
+                markerGraphFunctions = state.markerGraphFunctions.map { it.copy(selected = false) } + graph,
+                selectedMarkerGraphFunctionId = id,
+                compiledArExpression = compiled,
+                arGraphSliders = compiled.parameters,
+                arGraphAnalysis = arMathEngine.analyze(compiled, state.arGraphAnalysisFocusX, state.compiledComparisonExpression),
+                userMessage = UiMessage("${source} added to G01.")
+            )
+        }
+    }
+
+    fun selectMarkerGraphFunction(id: String) {
+        _uiState.update { state ->
+            val selected = state.markerGraphFunctions.firstOrNull { it.id == id } ?: return@update state
+            state.copy(
+                markerMathActivity = MarkerMathActivity.FunctionGraph,
+                markerGraphFunctions = state.markerGraphFunctions.map { it.copy(selected = it.id == id) },
+                selectedMarkerGraphFunctionId = id,
+                liveEquation = selected.source,
+                compiledArExpression = selected.compiled,
+                arGraphSliders = selected.sliders,
+                arGraphAnalysis = arMathEngine.analyze(selected.compiled, state.arGraphAnalysisFocusX, state.compiledComparisonExpression),
+                userMessage = UiMessage("${selected.source} selected.")
+            )
+        }
+    }
+
+    fun toggleSelectedMarkerGraphVisibility() {
+        _uiState.update { state ->
+            val id = state.selectedMarkerGraphFunctionId ?: return@update state.copy(userMessage = UiMessage("Select a function first."))
+            state.copy(
+                markerGraphFunctions = state.markerGraphFunctions.map { graph ->
+                    if (graph.id == id) graph.copy(visible = !graph.visible) else graph
+                },
+                userMessage = UiMessage("Function visibility changed.")
+            )
+        }
+    }
+
+    fun deleteSelectedMarkerGraphFunction() {
+        _uiState.update { state ->
+            val id = state.selectedMarkerGraphFunctionId ?: return@update state.copy(userMessage = UiMessage("Select a function first."))
+            val remaining = state.markerGraphFunctions.filterNot { it.id == id }
+            val nextSelected = remaining.lastOrNull()
+            state.copy(
+                markerGraphFunctions = remaining.map { it.copy(selected = it.id == nextSelected?.id) },
+                selectedMarkerGraphFunctionId = nextSelected?.id,
+                liveEquation = nextSelected?.source ?: state.liveEquation,
+                compiledArExpression = nextSelected?.compiled ?: state.compiledArExpression,
+                arGraphSliders = nextSelected?.sliders ?: emptyList(),
+                userMessage = UiMessage("Function deleted.")
+            )
+        }
+    }
+
+    fun duplicateSelectedMarkerGraphFunction() {
+        _uiState.update { state ->
+            val selected = state.markerGraphFunctions.firstOrNull { it.id == state.selectedMarkerGraphFunctionId }
+                ?: return@update state.copy(userMessage = UiMessage("Select a function first."))
+            val copy = selected.copy(
+                id = "marker-graph-${System.currentTimeMillis()}-${state.markerGraphFunctions.size}",
+                source = selected.source,
+                selected = true,
+                colorIndex = state.markerGraphFunctions.size
+            )
+            state.copy(
+                markerGraphFunctions = state.markerGraphFunctions.map { it.copy(selected = false) } + copy,
+                selectedMarkerGraphFunctionId = copy.id,
+                userMessage = UiMessage("Function duplicated.")
+            )
+        }
+    }
+
+    fun updateSelectedMarkerGraphParameter(symbol: String, value: Float) {
+        _uiState.update { state ->
+            val id = state.selectedMarkerGraphFunctionId ?: return@update state
+            var selectedCompiled = state.compiledArExpression
+            var selectedSliders = state.arGraphSliders
+            val graphs = state.markerGraphFunctions.map { graph ->
+                if (graph.id != id) return@map graph
+                val sliders = graph.sliders.map { slider ->
+                    if (slider.symbol == symbol) slider.copy(value = value.toDouble().coerceIn(slider.minimum, slider.maximum)) else slider
+                }
+                val compiled = arMathEngine.compile(
+                    source = graph.source,
+                    existingSliders = sliders,
+                    domain = state.arGraphDomain,
+                    qualityPreset = state.arGraphQualityPreset
+                )
+                selectedCompiled = compiled
+                selectedSliders = compiled.parameters
+                graph.copy(compiled = compiled, sliders = compiled.parameters)
+            }
+            state.copy(
+                markerGraphFunctions = graphs,
+                compiledArExpression = selectedCompiled,
+                arGraphSliders = selectedSliders,
+                arGraphAnalysis = arMathEngine.analyze(selectedCompiled, state.arGraphAnalysisFocusX, state.compiledComparisonExpression),
+                userMessage = UiMessage("$symbol = ${"%.2f".format(value)}")
+            )
+        }
+    }
+
+    fun toggleMarkerGraphTrace(mode: MarkerGraphTraceMode) {
+        _uiState.update { state ->
+            val next = if (state.markerGraphTraceMode == mode) MarkerGraphTraceMode.Off else mode
+            state.copy(
+                markerGraphTraceMode = next,
+                markerGraphShowDerivative = next == MarkerGraphTraceMode.Tangent,
+                markerGraphShowIntegralArea = next == MarkerGraphTraceMode.Integral,
+                userMessage = UiMessage("${next.name.lowercase().replaceFirstChar { it.uppercase() }} mode.")
+            )
+        }
+    }
+
+    fun setMarkerGraphTraceProgress(progress: Float) {
+        _uiState.update { state ->
+            val x = state.arGraphDomain.xMin + (state.arGraphDomain.xMax - state.arGraphDomain.xMin) * progress.coerceIn(0f, 1f)
+            val selected = state.markerGraphFunctions.firstOrNull { it.id == state.selectedMarkerGraphFunctionId }
+            state.copy(
+                markerGraphTraceProgress = progress.coerceIn(0f, 1f),
+                arGraphAnalysisFocusX = x,
+                arGraphAnalysis = selected?.let { arMathEngine.analyze(it.compiled, x, state.compiledComparisonExpression) } ?: state.arGraphAnalysis
+            )
+        }
+    }
+
+    fun fitMarkerGraphView() {
+        _uiState.update { state ->
+            val domain = ArGraphDomain(xMin = -6.0, xMax = 6.0, yMin = -6.0, yMax = 6.0, valueClamp = 8.0)
+            state.recompileMarkerGraphs(domain).copy(userMessage = UiMessage("Graph view fitted."))
+        }
+    }
+
+    fun zoomMarkerGraph(factor: Double) {
+        _uiState.update { state ->
+            val domain = state.arGraphDomain.zoomed(factor)
+            state.recompileMarkerGraphs(domain).copy(userMessage = UiMessage("Graph zoom updated."))
+        }
+    }
+
+    fun panMarkerGraph(dx: Double, dy: Double) {
+        _uiState.update { state ->
+            val domain = state.arGraphDomain.copy(
+                xMin = state.arGraphDomain.xMin + dx,
+                xMax = state.arGraphDomain.xMax + dx,
+                yMin = state.arGraphDomain.yMin + dy,
+                yMax = state.arGraphDomain.yMax + dy
+            )
+            state.recompileMarkerGraphs(domain).copy(userMessage = UiMessage("Graph panned."))
+        }
+    }
+
+    fun toggleMarkerGraphOption(option: MarkerGraphTraceMode) {
+        toggleMarkerGraphTrace(option)
     }
 
     fun updateArGraphSlider(symbol: String, value: Float) {
@@ -1191,13 +1615,36 @@ class ArViewerViewModel : ViewModel() {
     }
 
     fun onAnchorEstablished() {
-        Log.d("AiStemAR", "Anchor established objects=${_uiState.value.mathScene.objects.size}")
+        if (_uiState.value.arEngineMode == ArEngineMode.PaperGraph && _uiState.value.activeMarkerLessonId != null) {
+            _uiState.update {
+                it.copy(
+                    sessionStatus = ArSessionStatus.ObjectSelected,
+                    recoveryMode = ArRecoveryMode.Normal,
+                    canRePlaceObject = true,
+                    placementQuality = PlacementQuality.Excellent,
+                    interactionMode = InteractionMode.ObjectSelected,
+                    sceneInteractionMode = SceneInteractionMode.Select,
+                    userMessage = UiMessage("${it.activeMarkerLessonId} lesson anchored.")
+                )
+            }
+            return
+        }
         if (_uiState.value.mathScene.objects.isEmpty()) {
             val current = _uiState.value
-            val placement = current.lastPlacementPoint?.let { point ->
-                snappedPosition(point, current)
-            } ?: Vector3Value()
-            mutate("Place object") { SceneMutations.addObject(it, current.selectedDefinitionId, placement) }
+            val transform = if (current.arEngineMode == ArEngineMode.PaperGraph) {
+                Shape3dEngine.placementPlan(
+                    Shape3dPlacementRequest(
+                        definitionId = current.selectedDefinitionId,
+                        anchorMode = current.arEngineMode.toShape3dAnchorMode(),
+                        normalizedX = 0.0,
+                        normalizedZ = 0.0,
+                        snapToGrid = true
+                    )
+                ).transform
+            } else {
+                ObjectTransform()
+            }
+            mutate("Place object") { SceneMutations.addObject(it, current.selectedDefinitionId, transform) }
         }
         val placed = _uiState.value.mathScene.primarySelectedObject ?: _uiState.value.mathScene.objects.firstOrNull()
         _uiState.update {
@@ -1586,12 +2033,12 @@ private fun ArViewerUiState.productionAnchorRecord(): PersistentAnchorRecord {
         label = when (kind) {
             PersistentAnchorKind.SceneOrigin -> "Scene origin anchor"
             PersistentAnchorKind.Plane -> "Surface plane anchor"
-            PersistentAnchorKind.PaperImage -> "Paper graph image anchor"
+            PersistentAnchorKind.PaperImage -> "Marker image anchor"
             PersistentAnchorKind.Geospatial -> "Outdoor geospatial anchor"
             PersistentAnchorKind.StreetscapeGeometry -> "Building mesh anchor"
         },
         worldPosition = position,
-        imageTargetName = lockedImage ?: if (kind == PersistentAnchorKind.PaperImage) "AI STEM Paper Graph" else null,
+        imageTargetName = lockedImage ?: if (kind == PersistentAnchorKind.PaperImage) "AI STEM Geometry Marker" else null,
         accuracyMeters = when (placementQuality) {
             PlacementQuality.Excellent -> 0.02
             PlacementQuality.Good -> 0.05
@@ -1601,6 +2048,569 @@ private fun ArViewerUiState.productionAnchorRecord(): PersistentAnchorRecord {
         }
     )
 }
+
+private fun String.extractMarkerLessonId(): String? =
+    Regex("""[Gg]01""")
+        .find(this)
+        ?.value
+        ?.uppercase()
+
+enum class Marker2dShapeTool(val label: String) {
+    Point("Point"),
+    Line("Line"),
+    Segment("Segment"),
+    Ray("Ray"),
+    Triangle("Triangle"),
+    Square("Square"),
+    Rectangle("Rectangle"),
+    Circle("Circle"),
+    Ellipse("Ellipse"),
+    Polygon("Polygon"),
+    RegularPolygon("Regular polygon"),
+    Angle("Angle"),
+    Arc("Arc"),
+    Perpendicular("Perpendicular"),
+    Parallel("Parallel"),
+    Clear("Clear")
+}
+
+private fun MarkerMathActivity.label(): String = when (this) {
+    MarkerMathActivity.Geometry2D -> "2D Geometry"
+    MarkerMathActivity.Geometry3D -> "3D Shapes"
+    MarkerMathActivity.FunctionGraph -> "Graph"
+    MarkerMathActivity.CoordinateLab -> "Coordinates"
+    MarkerMathActivity.Transformations -> "Transforms"
+    MarkerMathActivity.MeasurementLab -> "Measure"
+    MarkerMathActivity.Trigonometry -> "Trigonometry"
+}
+
+private fun MarkerTransformationTool.label(): String = when (this) {
+    MarkerTransformationTool.Translation -> "Translation"
+    MarkerTransformationTool.Rotation -> "Rotation"
+    MarkerTransformationTool.Reflection -> "Reflection"
+    MarkerTransformationTool.Dilation -> "Dilation"
+    MarkerTransformationTool.HorizontalStretch -> "Horizontal stretch"
+    MarkerTransformationTool.VerticalStretch -> "Vertical stretch"
+    MarkerTransformationTool.Shear -> "Shear"
+    MarkerTransformationTool.Composite -> "Composite"
+}
+
+private fun ArGraphDomain.zoomed(factor: Double): ArGraphDomain {
+    val safe = factor.coerceIn(0.35, 2.5)
+    val cx = (xMin + xMax) / 2.0
+    val cy = (yMin + yMax) / 2.0
+    val halfX = (xMax - xMin) * safe / 2.0
+    val halfY = (yMax - yMin) * safe / 2.0
+    return copy(xMin = cx - halfX, xMax = cx + halfX, yMin = cy - halfY, yMax = cy + halfY)
+}
+
+private fun ArViewerUiState.recompileMarkerGraphs(domain: ArGraphDomain): ArViewerUiState {
+    val engine = ArMathEngine()
+    val graphs = markerGraphFunctions.map { graph ->
+        val compiled = engine.compile(
+            source = graph.source,
+            existingSliders = graph.sliders,
+            domain = domain,
+            qualityPreset = arGraphQualityPreset
+        )
+        graph.copy(compiled = compiled, sliders = compiled.parameters)
+    }
+    val selected = graphs.firstOrNull { it.id == selectedMarkerGraphFunctionId }
+    return copy(
+        arGraphDomain = domain,
+        markerGraphFunctions = graphs,
+        compiledArExpression = selected?.compiled ?: compiledArExpression,
+        arGraphSliders = selected?.sliders ?: arGraphSliders
+    )
+}
+
+private fun ConstructionGeometryState.addMarkerPoint(): ConstructionGeometryState {
+    val index = points.size
+    val point = ConstructionPoint(
+        id = "marker-point-$index",
+        label = "P${index + 1}",
+        position = Vector3Value(-0.16 + (index % 5) * 0.08, 0.0, -0.12 + (index / 5) * 0.08)
+    )
+    val obj = ConstructionObject(
+        id = "marker-point-object-$index",
+        label = point.label,
+        kind = ConstructionObjectKind.Point,
+        pointIds = listOf(point.id),
+        dependencyKind = ConstructionDependencyKind.Free
+    )
+    return copy(points = points + point, objects = objects + obj, selectedPointIds = listOf(point.id), revision = revision + 1)
+}
+
+private fun ConstructionGeometryState.addMarkerLine(): ConstructionGeometryState =
+    addMarkerPolygonObject(
+        label = "Line",
+        kind = ConstructionObjectKind.Line,
+        dependencyKind = ConstructionDependencyKind.ThroughTwoPoints,
+        points = listOf(Vector3Value(-0.2, 0.0, 0.0), Vector3Value(0.2, 0.0, 0.0))
+    )
+
+private fun ConstructionGeometryState.addMarkerTriangle(): ConstructionGeometryState =
+    addMarkerPolygonObject(
+        label = "Triangle",
+        kind = ConstructionObjectKind.Polygon,
+        dependencyKind = ConstructionDependencyKind.PolygonThroughPoints,
+        points = listOf(Vector3Value(-0.16, 0.0, 0.12), Vector3Value(0.16, 0.0, 0.12), Vector3Value(0.0, 0.0, -0.14))
+    )
+
+private fun ConstructionGeometryState.addMarkerSquare(): ConstructionGeometryState =
+    addMarkerPolygonObject(
+        label = "Square",
+        kind = ConstructionObjectKind.Polygon,
+        dependencyKind = ConstructionDependencyKind.PolygonThroughPoints,
+        points = listOf(Vector3Value(-0.14, 0.0, -0.14), Vector3Value(0.14, 0.0, -0.14), Vector3Value(0.14, 0.0, 0.14), Vector3Value(-0.14, 0.0, 0.14))
+    )
+
+private fun ConstructionGeometryState.addMarkerCircle(): ConstructionGeometryState =
+    addMarkerPolygonObject(
+        label = "Circle",
+        kind = ConstructionObjectKind.Circle,
+        dependencyKind = ConstructionDependencyKind.CircleCenterPoint,
+        points = listOf(Vector3Value(0.0, 0.0, 0.0), Vector3Value(0.13, 0.0, 0.0))
+    )
+
+private fun ConstructionGeometryState.addMarkerPolygonObject(
+    label: String,
+    kind: ConstructionObjectKind,
+    dependencyKind: ConstructionDependencyKind,
+    points: List<Vector3Value>
+): ConstructionGeometryState {
+    val offset = objects.size * 0.025
+    val base = revision + objects.size + this.points.size
+    val newPoints = points.mapIndexed { index, position ->
+        ConstructionPoint(
+            id = "marker-${label.lowercase()}-$base-$index",
+            label = "${label.take(1)}${index + 1}",
+            position = position.plus(Vector3Value(offset, 0.0, offset))
+        )
+    }
+    val obj = ConstructionObject(
+        id = "marker-${label.lowercase()}-$base",
+        label = label,
+        kind = kind,
+        pointIds = newPoints.map { it.id },
+        dependencyKind = dependencyKind
+    )
+    return copy(points = this.points + newPoints, objects = objects + obj, selectedPointIds = newPoints.map { it.id }.takeLast(3), revision = revision + 1)
+}
+
+private fun markerObjectTransform(definitionId: String, index: Int): ObjectTransform =
+    Shape3dEngine.placementPlan(
+        Shape3dPlacementRequest(
+            definitionId = definitionId,
+            anchorMode = Shape3dAnchorMode.MarkerImage,
+            normalizedX = ((index % 3) - 1) * 0.42,
+            normalizedZ = (index / 3) * 0.32 - 0.12,
+            snapToGrid = true
+        )
+    ).transform
+
+private fun markerLessonState(markerId: String, state: ArViewerUiState): ArViewerUiState {
+    val definition = markerLessonDefinition(markerId)
+    val selectedType = definition.selectedType
+    val definitionId = DefaultMathObjectRegistry.getAllDefinitions().first { it.type == selectedType }.definitionId
+    return state.copy(
+        activeMarkerLessonId = markerId,
+        markerLessonTitle = definition.title,
+        markerLessonSubtitle = definition.subtitle,
+        markerLessonInteraction = MarkerLessonInteractionState(elements = definition.elements),
+        selectedObjectType = selectedType,
+        selectedDefinitionId = definitionId,
+        userMessage = UiMessage("G01 locked. Choose 2D, 3D, Graph, or Coord.")
+    )
+}
+
+private data class MarkerLessonDefinition(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val selectedType: MathObjectType,
+    val construction: ConstructionGeometryState,
+    val elements: List<MarkerLessonElement>
+)
+
+private fun markerLessonDefinition(markerId: String): MarkerLessonDefinition =
+    when (markerId) {
+        "G01" -> MarkerLessonDefinition(markerId, "G01 Geometry Foundations", "Points, lines, segments, rays and planes", MathObjectType.CoordinatePlane, geometryFoundationsConstruction(), elements(
+            "Point A" to "A has position only",
+            "Line PQ" to "extends forever",
+            "Segment AB" to "finite length",
+            "Ray CD" to "one endpoint",
+            "Plane pi" to "flat 2D surface in 3D"
+        ))
+        "G02" -> MarkerLessonDefinition(markerId, "G02 Angles", "Types, measures and relationships", MathObjectType.VectorArrow, anglesConstruction(), elements(
+            "Acute angle" to "0 < theta < 90",
+            "Right angle" to "theta = 90",
+            "Obtuse angle" to "90 < theta < 180",
+            "Supplementary" to "alpha + beta = 180"
+        ))
+        "G03" -> MarkerLessonDefinition(markerId, "G03 2D Shapes", "Triangles, quadrilaterals, circles and polygons", MathObjectType.Triangle, shapeGalleryConstruction(), elements(
+            "Triangle" to "P = a + b + c",
+            "Square" to "A = s^2",
+            "Rectangle" to "A = l x w",
+            "Circle" to "A = pi r^2",
+            "Polygon" to "(n - 2) x 180"
+        ))
+        "G04" -> MarkerLessonDefinition(markerId, "G04 Circle Concepts", "Radius, diameter, chords, tangent, secant and sector", MathObjectType.Circle, circleConceptConstruction(), elements(
+            "Radius OC" to "center to circle",
+            "Diameter BD" to "2r",
+            "Chord EC" to "joins two circle points",
+            "Tangent PT" to "touches once",
+            "Sector BOC" to "arc plus two radii"
+        ))
+        "G05" -> MarkerLessonDefinition(markerId, "G05 Triangle Geometry", "Types, angle sum, congruence and similarity", MathObjectType.Triangle, triangleGeometryConstruction(), elements(
+            "Equilateral" to "all angles 60",
+            "Isosceles" to "base angles equal",
+            "Scalene" to "all sides different",
+            "Angle sum" to "A + B + C = 180",
+            "Similarity" to "same shape, scaled"
+        ))
+        "G06" -> MarkerLessonDefinition(markerId, "G06 Transformations", "Translation, rotation, reflection and enlargement", MathObjectType.VectorArrow, transformationsConstruction(), elements(
+            "Translation" to "move by vector v",
+            "Rotation" to "turn about a center",
+            "Reflection" to "mirror across line l",
+            "Enlargement" to "scale factor k"
+        ))
+        "A01" -> MarkerLessonDefinition(markerId, "A01 Algebra Foundations", "Variables, coefficients, constants and like terms", MathObjectType.NumberLine, algebraFoundationsConstruction(), elements(
+            "Coefficient" to "3 in 3x",
+            "Variable" to "x, y",
+            "Constant" to "-5",
+            "Like terms" to "5x + 3x - 2x = 6x"
+        ))
+        "A02" -> MarkerLessonDefinition(markerId, "A02 Equations & Inequalities", "Linear equations, simultaneous equations and number-line solutions", MathObjectType.NumberLine, equationsConstruction(), elements(
+            "Linear equation" to "2x + 5 = 17",
+            "Solution" to "x = 6",
+            "Simultaneous" to "x = 2, y = 3",
+            "Inequality" to "x > 2"
+        ))
+        "A03" -> MarkerLessonDefinition(markerId, "A03 Polynomials", "Operations, factorisation, roots and graphs", MathObjectType.SineCurve, polynomialConstruction(), elements(
+            "Polynomial" to "x^2 + 5x + 6",
+            "Factorisation" to "(x + 2)(x + 3)",
+            "Roots" to "x = -2, -3",
+            "Vertex" to "axis of symmetry"
+        ))
+        "A04" -> MarkerLessonDefinition(markerId, "A04 Sequences & Series", "AP, GP and nth term", MathObjectType.NumberLine, sequencesConstruction(), elements(
+            "Pattern" to "2, 5, 8, 11...",
+            "AP" to "a_n = a_1 + (n - 1)d",
+            "GP" to "a_n = a_1 r^(n - 1)",
+            "nth term" to "jump directly to term n"
+        ))
+        "C01" -> MarkerLessonDefinition(markerId, "C01 Coordinate Basics", "Cartesian plane, quadrants and point plotting", MathObjectType.CoordinatePlane, coordinateBasicsConstruction(), elements(
+            "Quadrant I" to "x > 0, y > 0",
+            "Quadrant II" to "x < 0, y > 0",
+            "Point A" to "(2, 3)",
+            "Point D" to "(3, -1)"
+        ))
+        "C02" -> MarkerLessonDefinition(markerId, "C02 Lines & Distance", "Distance, midpoint, slope and line equation", MathObjectType.CoordinatePlane, linesDistanceConstruction(), elements(
+            "Distance" to "sqrt((x2-x1)^2+(y2-y1)^2)",
+            "Midpoint" to "((x1+x2)/2, (y1+y2)/2)",
+            "Slope" to "(y2-y1)/(x2-x1)",
+            "Line" to "y = mx + c"
+        ))
+        "C03" -> MarkerLessonDefinition(markerId, "C03 Advanced Coordinate Geometry", "Circles, intersections, tangents and loci", MathObjectType.Circle, advancedCoordinateConstruction(), elements(
+            "Circle equation" to "(x-h)^2 + (y-k)^2 = r^2",
+            "Line-circle" to "two intersections",
+            "Tangent" to "radius perpendicular",
+            "Locus" to "set of points"
+        ))
+        "F01" -> MarkerLessonDefinition(markerId, "F01 Functions & Graphs", "Linear, quadratic, cubic, exponential and logarithmic", MathObjectType.SineCurve, functionsConstruction(), elements(
+            "Linear" to "f(x)=mx+c",
+            "Quadratic" to "f(x)=ax^2+bx+c",
+            "Cubic" to "f(x)=ax^3+...",
+            "Exponential" to "f(x)=a^x",
+            "Logarithmic" to "f(x)=log_a x"
+        ))
+        "F02" -> MarkerLessonDefinition(markerId, "F02 Graph Transformations", "Translation, reflection, stretching and compression", MathObjectType.SineCurve, graphTransformConstruction(), elements(
+            "Parent" to "y=x^2",
+            "Horizontal shift" to "y=(x-h)^2",
+            "Vertical shift" to "y=x^2+k",
+            "Reflection" to "y=-x^2",
+            "Stretch" to "y=ax^2"
+        ))
+        "M01" -> MarkerLessonDefinition(markerId, "M01 Plane Mensuration", "Perimeter and area of plane shapes", MathObjectType.RectangularPrism, planeMensurationConstruction(), elements(
+            "Rectangle" to "A = l x b",
+            "Triangle" to "A = 1/2 x b x h",
+            "Circle" to "A = pi r^2",
+            "Circumference" to "C = 2 pi r"
+        ))
+        "M02" -> MarkerLessonDefinition(markerId, "M02 Solid Mensuration", "Surface area and volume of solids", MathObjectType.Cube, solidMensurationConstruction(), elements(
+            "Cube" to "SA = 6a^2, V = a^3",
+            "Cylinder" to "SA = 2pi r(r+h), V = pi r^2h",
+            "Cone" to "SA = pi r(l+r), V = 1/3 pi r^2h",
+            "Sphere" to "SA = 4pi r^2, V = 4/3 pi r^3"
+        ))
+        else -> MarkerLessonDefinition(markerId, "$markerId Marker", "Interactive AR Maths lesson", MathObjectType.Cube, emptyMarkerConstruction(markerId), elements(markerId to "Marker locked"))
+    }
+
+private fun elements(vararg entries: Pair<String, String>): List<MarkerLessonElement> =
+    entries.mapIndexed { index, entry ->
+        MarkerLessonElement(
+            id = "element-$index",
+            label = entry.first,
+            kind = MarkerLessonElementKind.Point,
+            formula = entry.second
+        )
+    }
+
+private fun geometryFoundationsConstruction(): ConstructionGeometryState {
+    val points = listOf(
+        ConstructionPoint("g01-a", "A", Vector3Value(-0.18, 0.0, -0.12)),
+        ConstructionPoint("g01-p", "P", Vector3Value(-0.2, 0.0, 0.0)),
+        ConstructionPoint("g01-q", "Q", Vector3Value(-0.04, 0.0, 0.0)),
+        ConstructionPoint("g01-b1", "B", Vector3Value(-0.2, 0.0, 0.11)),
+        ConstructionPoint("g01-b2", "C", Vector3Value(-0.04, 0.0, 0.11)),
+        ConstructionPoint("g01-r1", "D", Vector3Value(-0.2, 0.0, 0.2)),
+        ConstructionPoint("g01-r2", "E", Vector3Value(-0.04, 0.0, 0.2)),
+        ConstructionPoint("g01-x", "X", Vector3Value(0.08, 0.0, -0.05)),
+        ConstructionPoint("g01-y", "Y", Vector3Value(0.2, 0.0, 0.02)),
+        ConstructionPoint("g01-z", "Z", Vector3Value(0.1, 0.0, 0.15))
+    )
+    val objects = listOf(
+        ConstructionObject("g01-point-a", "Point A", ConstructionObjectKind.Point, listOf("g01-a"), ConstructionDependencyKind.Free),
+        ConstructionObject("g01-line-pq", "Line PQ", ConstructionObjectKind.Line, listOf("g01-p", "g01-q"), ConstructionDependencyKind.ThroughTwoPoints),
+        ConstructionObject("g01-segment-bc", "Segment BC", ConstructionObjectKind.Segment, listOf("g01-b1", "g01-b2"), ConstructionDependencyKind.ThroughTwoPoints),
+        ConstructionObject("g01-ray-de", "Ray DE", ConstructionObjectKind.Ray, listOf("g01-r1", "g01-r2"), ConstructionDependencyKind.ThroughTwoPoints),
+        ConstructionObject("g01-plane-xyz", "Plane pi", ConstructionObjectKind.Plane, listOf("g01-x", "g01-y", "g01-z"), ConstructionDependencyKind.PlaneThroughThreePoints)
+    )
+    return ConstructionGeometryState(points = points, objects = objects, revision = 1)
+}
+
+private fun anglesConstruction(): ConstructionGeometryState {
+    val points = listOf(
+        ConstructionPoint("g02-o", "O", Vector3Value(0.0, 0.0, 0.0)),
+        ConstructionPoint("g02-a", "A", Vector3Value(-0.18, 0.0, 0.12)),
+        ConstructionPoint("g02-b", "B", Vector3Value(0.2, 0.0, 0.1)),
+        ConstructionPoint("g02-c", "C", Vector3Value(0.02, 0.0, -0.2)),
+        ConstructionPoint("g02-d", "D", Vector3Value(0.22, 0.0, -0.12)),
+        ConstructionPoint("g02-e", "E", Vector3Value(-0.22, 0.0, -0.08))
+    )
+    val objects = listOf(
+        ConstructionObject("g02-ray-oa", "Ray OA", ConstructionObjectKind.Ray, listOf("g02-o", "g02-a"), ConstructionDependencyKind.ThroughTwoPoints),
+        ConstructionObject("g02-ray-ob", "Ray OB", ConstructionObjectKind.Ray, listOf("g02-o", "g02-b"), ConstructionDependencyKind.ThroughTwoPoints),
+        ConstructionObject("g02-segment-cd", "Angle side CD", ConstructionObjectKind.Segment, listOf("g02-c", "g02-d"), ConstructionDependencyKind.ThroughTwoPoints),
+        ConstructionObject("g02-segment-ce", "Angle side CE", ConstructionObjectKind.Segment, listOf("g02-c", "g02-e"), ConstructionDependencyKind.ThroughTwoPoints),
+        ConstructionObject("g02-line-ed", "Straight angle ED", ConstructionObjectKind.Line, listOf("g02-e", "g02-d"), ConstructionDependencyKind.ThroughTwoPoints)
+    )
+    return ConstructionGeometryState(points = points, objects = objects, revision = 1)
+}
+
+private fun shapeGalleryConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(
+            p("tri-a", -0.24, -0.12), p("tri-b", -0.14, -0.12), p("tri-c", -0.19, -0.01),
+            p("sq-a", -0.08, -0.12), p("sq-b", 0.02, -0.12), p("sq-c", 0.02, -0.02), p("sq-d", -0.08, -0.02),
+            p("rect-a", 0.08, -0.12), p("rect-b", 0.24, -0.12), p("rect-c", 0.24, -0.04), p("rect-d", 0.08, -0.04),
+            p("circle-o", -0.18, 0.14), p("circle-r", -0.1, 0.14),
+            p("poly-a", 0.1, 0.08), p("poly-b", 0.18, 0.04), p("poly-c", 0.24, 0.1), p("poly-d", 0.2, 0.18), p("poly-e", 0.1, 0.18)
+        ),
+        objects = listOf(
+            o("tri", "Triangle", ConstructionObjectKind.Polygon, "tri-a", "tri-b", "tri-c"),
+            o("sq", "Square", ConstructionObjectKind.Polygon, "sq-a", "sq-b", "sq-c", "sq-d"),
+            o("rect", "Rectangle", ConstructionObjectKind.Polygon, "rect-a", "rect-b", "rect-c", "rect-d"),
+            o("circle", "Circle", ConstructionObjectKind.Circle, "circle-o", "circle-r"),
+            o("poly", "Pentagon", ConstructionObjectKind.Polygon, "poly-a", "poly-b", "poly-c", "poly-d", "poly-e")
+        ),
+        revision = 1
+    )
+
+private fun circleConceptConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(
+            p("o", 0.0, 0.0), p("a", -0.16, 0.0), p("c", 0.16, 0.0), p("b", 0.0, -0.16), p("d", 0.0, 0.16),
+            p("e", -0.12, -0.1), p("f", 0.12, 0.1), p("p", 0.12, -0.1), p("t", 0.22, -0.18), p("s", -0.16, 0.12), p("r", 0.22, 0.18)
+        ),
+        objects = listOf(
+            o("circle", "Circle", ConstructionObjectKind.Circle, "o", "c"),
+            o("radius", "Radius OC", ConstructionObjectKind.Segment, "o", "c"),
+            o("diameter", "Diameter BD", ConstructionObjectKind.Segment, "b", "d"),
+            o("chord", "Chord EF", ConstructionObjectKind.Segment, "e", "f"),
+            o("tangent", "Tangent PT", ConstructionObjectKind.Line, "p", "t"),
+            o("secant", "Secant SR", ConstructionObjectKind.Line, "s", "r"),
+            o("sector", "Sector BOC", ConstructionObjectKind.Polygon, "o", "b", "c")
+        ),
+        revision = 1
+    )
+
+private fun triangleGeometryConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(
+            p("eq-a", -0.24, -0.1), p("eq-b", -0.12, -0.1), p("eq-c", -0.18, -0.0),
+            p("iso-a", -0.04, -0.1), p("iso-b", 0.08, -0.1), p("iso-c", 0.02, 0.04),
+            p("sca-a", 0.14, -0.1), p("sca-b", 0.28, -0.08), p("sca-c", 0.2, 0.07),
+            p("sum-a", -0.12, 0.12), p("sum-b", 0.08, 0.12), p("sum-c", -0.02, 0.24)
+        ),
+        objects = listOf(
+            o("eq", "Equilateral", ConstructionObjectKind.Polygon, "eq-a", "eq-b", "eq-c"),
+            o("iso", "Isosceles", ConstructionObjectKind.Polygon, "iso-a", "iso-b", "iso-c"),
+            o("sca", "Scalene", ConstructionObjectKind.Polygon, "sca-a", "sca-b", "sca-c"),
+            o("sum", "Angle Sum", ConstructionObjectKind.Polygon, "sum-a", "sum-b", "sum-c")
+        ),
+        revision = 1
+    )
+
+private fun transformationsConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(
+            p("ta", -0.24, -0.1), p("tb", -0.16, -0.1), p("tc", -0.16, -0.02), p("td", -0.24, -0.02),
+            p("ta2", -0.06, 0.0), p("tb2", 0.02, 0.0), p("tc2", 0.02, 0.08), p("td2", -0.06, 0.08),
+            p("ra", 0.12, -0.1), p("rb", 0.22, -0.1), p("rc", 0.17, 0.02),
+            p("ma", -0.2, 0.12), p("mb", -0.1, 0.12), p("mc", -0.2, 0.22), p("ma2", 0.1, 0.12), p("mb2", 0.2, 0.12), p("mc2", 0.2, 0.22),
+            p("mirror-a", 0.0, 0.08), p("mirror-b", 0.0, 0.26)
+        ),
+        objects = listOf(
+            o("trans-a", "A", ConstructionObjectKind.Polygon, "ta", "tb", "tc", "td"),
+            o("trans-b", "A prime", ConstructionObjectKind.Polygon, "ta2", "tb2", "tc2", "td2"),
+            o("vector", "Vector v", ConstructionObjectKind.Vector, "tc", "ta2"),
+            o("rotation", "Rotation", ConstructionObjectKind.Polygon, "ra", "rb", "rc"),
+            o("reflect-a", "Reflect A", ConstructionObjectKind.Polygon, "ma", "mb", "mc"),
+            o("reflect-b", "Reflect A prime", ConstructionObjectKind.Polygon, "ma2", "mb2", "mc2"),
+            o("mirror", "Mirror line", ConstructionObjectKind.Line, "mirror-a", "mirror-b")
+        ),
+        revision = 1
+    )
+
+private fun algebraFoundationsConstruction(): ConstructionGeometryState =
+    expressionBlocks("A01", listOf("3x" to -0.16, "2y" to 0.02, "-5" to 0.18))
+
+private fun equationsConstruction(): ConstructionGeometryState =
+    expressionBlocks("A02", listOf("2x+5" to -0.18, "17" to -0.02, "x>2" to 0.16))
+
+private fun polynomialConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = parabolaPoints("poly", -0.22, 0.22, 9) + listOf(p("r1", -0.12, 0.0), p("r2", 0.12, 0.0)),
+        objects = parabolaObjects("poly", 9) + listOf(
+            o("root1", "Root -2", ConstructionObjectKind.Point, "r1"),
+            o("root2", "Root -3", ConstructionObjectKind.Point, "r2")
+        ),
+        revision = 1
+    )
+
+private fun sequencesConstruction(): ConstructionGeometryState {
+    val points = (0..5).map { index -> p("seq-$index", -0.24 + index * 0.095, -0.02) }
+    return ConstructionGeometryState(
+        points = points,
+        objects = (0 until 5).map { index -> o("step-$index", "+3", ConstructionObjectKind.Vector, "seq-$index", "seq-${index + 1}") },
+        revision = 1
+    )
+}
+
+private fun coordinateBasicsConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(
+            p("origin", 0.0, 0.0), p("x1", 0.24, 0.0), p("x2", -0.24, 0.0), p("y1", 0.0, 0.24), p("y2", 0.0, -0.24),
+            p("a", 0.1, -0.15), p("b", -0.15, -0.1), p("c", -0.1, 0.1), p("d", 0.16, 0.08)
+        ),
+        objects = listOf(
+            o("xaxis", "x-axis", ConstructionObjectKind.Line, "x1", "x2"),
+            o("yaxis", "y-axis", ConstructionObjectKind.Line, "y1", "y2"),
+            o("a", "A(2,3)", ConstructionObjectKind.Point, "a"),
+            o("b", "B(-3,2)", ConstructionObjectKind.Point, "b"),
+            o("c", "C(-2,-2)", ConstructionObjectKind.Point, "c"),
+            o("d", "D(3,-1)", ConstructionObjectKind.Point, "d")
+        ),
+        revision = 1
+    )
+
+private fun linesDistanceConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(p("a", -0.12, 0.08), p("b", 0.18, -0.12), p("m", 0.03, -0.02), p("x1", -0.24, 0.0), p("x2", 0.24, 0.0), p("y1", 0.0, -0.2), p("y2", 0.0, 0.2)),
+        objects = listOf(
+            o("xaxis", "x-axis", ConstructionObjectKind.Line, "x1", "x2"),
+            o("yaxis", "y-axis", ConstructionObjectKind.Line, "y1", "y2"),
+            o("ab", "Line AB", ConstructionObjectKind.Segment, "a", "b"),
+            o("m", "Midpoint M", ConstructionObjectKind.Point, "m")
+        ),
+        revision = 1
+    )
+
+private fun advancedCoordinateConstruction(): ConstructionGeometryState =
+    circleConceptConstruction().copy(revision = 1)
+
+private fun functionsConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = parabolaPoints("f", -0.24, 0.24, 13),
+        objects = parabolaObjects("f", 13),
+        revision = 1
+    )
+
+private fun graphTransformConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = parabolaPoints("parent", -0.24, 0.02, 8) + parabolaPoints("shift", -0.02, 0.24, 8, zOffset = -0.04),
+        objects = parabolaObjects("parent", 8) + parabolaObjects("shift", 8),
+        revision = 1
+    )
+
+private fun planeMensurationConstruction(): ConstructionGeometryState =
+    shapeGalleryConstruction().copy(revision = 1)
+
+private fun solidMensurationConstruction(): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(
+            p("cube-a", -0.24, -0.1), p("cube-b", -0.14, -0.1), p("cube-c", -0.14, 0.0), p("cube-d", -0.24, 0.0),
+            p("cyl-o", -0.02, -0.04), p("cyl-r", 0.06, -0.04),
+            p("cone-a", 0.1, -0.1), p("cone-b", 0.22, -0.1), p("cone-c", 0.16, 0.05),
+            p("sphere-o", 0.12, 0.16), p("sphere-r", 0.22, 0.16)
+        ),
+        objects = listOf(
+            o("cube", "Cube", ConstructionObjectKind.Polygon, "cube-a", "cube-b", "cube-c", "cube-d"),
+            o("cylinder", "Cylinder base", ConstructionObjectKind.Circle, "cyl-o", "cyl-r"),
+            o("cone", "Cone", ConstructionObjectKind.Polygon, "cone-a", "cone-b", "cone-c"),
+            o("sphere", "Sphere", ConstructionObjectKind.Circle, "sphere-o", "sphere-r")
+        ),
+        revision = 1
+    )
+
+private fun expressionBlocks(prefix: String, terms: List<Pair<String, Double>>): ConstructionGeometryState {
+    val points = terms.flatMapIndexed { index, (_, x) ->
+        listOf(p("$prefix-$index-a", x - 0.04, 0.0), p("$prefix-$index-b", x + 0.04, 0.0), p("$prefix-$index-c", x + 0.04, 0.08), p("$prefix-$index-d", x - 0.04, 0.08))
+    }
+    val objects = terms.mapIndexed { index, (label, _) ->
+        o("$prefix-term-$index", label, ConstructionObjectKind.Polygon, "$prefix-$index-a", "$prefix-$index-b", "$prefix-$index-c", "$prefix-$index-d")
+    }
+    return ConstructionGeometryState(points = points, objects = objects, revision = 1)
+}
+
+private fun parabolaPoints(prefix: String, start: Double, end: Double, count: Int, zOffset: Double = 0.0): List<ConstructionPoint> =
+    (0 until count).map { index ->
+        val t = index / (count - 1).toDouble()
+        val x = start + (end - start) * t
+        val z = ((t - 0.5) * (t - 0.5) * 0.55 - 0.05) + zOffset
+        p("$prefix-$index", x, z)
+    }
+
+private fun parabolaObjects(prefix: String, count: Int): List<ConstructionObject> =
+    (0 until count - 1).map { index ->
+        o("$prefix-seg-$index", "Graph", ConstructionObjectKind.Segment, "$prefix-$index", "$prefix-${index + 1}")
+    }
+
+private fun p(id: String, x: Double, z: Double, y: Double = 0.0): ConstructionPoint =
+    ConstructionPoint(id, id.uppercase(), Vector3Value(x, y, z))
+
+private fun o(id: String, label: String, kind: ConstructionObjectKind, vararg pointIds: String): ConstructionObject =
+    ConstructionObject(
+        id = id,
+        label = label,
+        kind = kind,
+        pointIds = pointIds.toList(),
+        dependencyKind = when (kind) {
+            ConstructionObjectKind.Circle -> ConstructionDependencyKind.CircleCenterPoint
+            ConstructionObjectKind.Plane -> ConstructionDependencyKind.PlaneThroughThreePoints
+            ConstructionObjectKind.Polygon -> ConstructionDependencyKind.PolygonThroughPoints
+            ConstructionObjectKind.Vector -> ConstructionDependencyKind.VectorBetweenPoints
+            else -> ConstructionDependencyKind.ThroughTwoPoints
+        }
+    )
+
+private fun emptyMarkerConstruction(markerId: String): ConstructionGeometryState =
+    ConstructionGeometryState(
+        points = listOf(ConstructionPoint("$markerId-origin", markerId, Vector3Value())),
+        objects = listOf(ConstructionObject("$markerId-point", markerId, ConstructionObjectKind.Point, listOf("$markerId-origin"), ConstructionDependencyKind.Free)),
+        revision = 1
+    )
 
 private fun ArPerformanceProfile.toGraphQualityPreset(): GraphQualityPreset = when (this) {
     ArPerformanceProfile.BatterySaver -> GraphQualityPreset.BatterySaver
@@ -1621,6 +2631,14 @@ private fun ArEngineMode.toMathArExperience(): MathArExperience = when (this) {
     ArEngineMode.PaperGraph -> MathArExperience.MarkerBasedGraph
     ArEngineMode.OutdoorGeospatialMath -> MathArExperience.OutdoorGeometry
     else -> MathArExperience.MarkerlessObjects
+}
+
+private fun ArEngineMode.toShape3dAnchorMode(): Shape3dAnchorMode = when (this) {
+    ArEngineMode.PaperGraph -> Shape3dAnchorMode.MarkerImage
+    ArEngineMode.OutdoorGeospatialMath -> Shape3dAnchorMode.OutdoorMesh
+    ArEngineMode.AirPlacement -> Shape3dAnchorMode.Air
+    ArEngineMode.Indoor,
+    ArEngineMode.SurfacePlacement -> Shape3dAnchorMode.SurfacePlane
 }
 
 private fun ArDepthOcclusionMode.label(): String = when (this) {

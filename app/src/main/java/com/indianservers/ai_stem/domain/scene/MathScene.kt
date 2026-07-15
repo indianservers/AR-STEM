@@ -124,7 +124,12 @@ object IdFactory {
 }
 
 object SceneObjectFactory {
-    fun create(definitionId: String, existingNames: List<String> = emptyList(), position: Vector3Value = Vector3Value()): MathSceneObject {
+    fun create(
+        definitionId: String,
+        existingNames: List<String> = emptyList(),
+        position: Vector3Value = Vector3Value(),
+        transform: ObjectTransform = ObjectTransform(position = position)
+    ): MathSceneObject {
         val definition = requireNotNull(DefaultMathObjectRegistry.getDefinition(definitionId)) {
             "Unknown object definition: $definitionId"
         }
@@ -134,7 +139,7 @@ object SceneObjectFactory {
             definitionId = definition.definitionId,
             displayName = uniqueName(definition.displayName, existingNames),
             objectType = definition.type,
-            transform = ObjectTransform(position = position),
+            transform = transform,
             parameters = definition.defaultParameters,
             createdAt = now,
             updatedAt = now
