@@ -258,6 +258,40 @@ class ArViewerViewModel : ViewModel() {
         }
     }
 
+    fun selectMarkerTransformShape(shape: MarkerTransformShape) {
+        _uiState.update {
+            it.copy(
+                markerMathActivity = MarkerMathActivity.Transformations,
+                markerTransformShape = shape,
+                markerTransformProgress = 0f,
+                userMessage = UiMessage("${shape.label()} selected for transformations.")
+            )
+        }
+    }
+
+    fun addMarkerTransformationSequenceStep(action: MarkerTransformSequenceAction) {
+        _uiState.update {
+            val step = MarkerTransformationStepState(action = action, label = action.label())
+            it.copy(
+                markerMathActivity = MarkerMathActivity.Transformations,
+                markerTransformTool = MarkerTransformationTool.Composite,
+                markerTransformProgress = 0f,
+                markerTransformationSequence = (it.markerTransformationSequence + step).takeLast(6),
+                userMessage = UiMessage("${step.label} added to sequence.")
+            )
+        }
+    }
+
+    fun clearMarkerTransformationSequence() {
+        _uiState.update {
+            it.copy(
+                markerTransformationSequence = emptyList(),
+                markerTransformProgress = 0f,
+                userMessage = UiMessage("Transformation sequence cleared.")
+            )
+        }
+    }
+
     fun setMarkerTransformProgress(progress: Float) {
         _uiState.update {
             it.copy(markerMathActivity = MarkerMathActivity.Transformations, markerTransformProgress = progress.coerceIn(0f, 1f))
@@ -276,6 +310,14 @@ class ArViewerViewModel : ViewModel() {
         _uiState.update { it.copy(markerRotationDegrees = value.coerceIn(-180f, 180f)) }
     }
 
+    fun setMarkerRotationCenterX(value: Float) {
+        _uiState.update { it.copy(markerRotationCenterX = value.coerceIn(-0.28f, 0.28f), markerTransformTool = MarkerTransformationTool.Rotation, markerMathActivity = MarkerMathActivity.Transformations) }
+    }
+
+    fun setMarkerRotationCenterY(value: Float) {
+        _uiState.update { it.copy(markerRotationCenterY = value.coerceIn(-0.28f, 0.28f), markerTransformTool = MarkerTransformationTool.Rotation, markerMathActivity = MarkerMathActivity.Transformations) }
+    }
+
     fun toggleMarkerRotationDirection() {
         _uiState.update { it.copy(markerRotationClockwise = !it.markerRotationClockwise) }
     }
@@ -286,6 +328,14 @@ class ArViewerViewModel : ViewModel() {
 
     fun setMarkerDilationScale(value: Float) {
         _uiState.update { it.copy(markerDilationScale = value.coerceIn(0.2f, 2.6f)) }
+    }
+
+    fun setMarkerDilationCenterX(value: Float) {
+        _uiState.update { it.copy(markerDilationCenterX = value.coerceIn(-0.28f, 0.28f), markerTransformTool = MarkerTransformationTool.Dilation, markerMathActivity = MarkerMathActivity.Transformations) }
+    }
+
+    fun setMarkerDilationCenterY(value: Float) {
+        _uiState.update { it.copy(markerDilationCenterY = value.coerceIn(-0.28f, 0.28f), markerTransformTool = MarkerTransformationTool.Dilation, markerMathActivity = MarkerMathActivity.Transformations) }
     }
 
     fun setMarkerHorizontalStretch(value: Float) {
@@ -304,11 +354,16 @@ class ArViewerViewModel : ViewModel() {
         _uiState.update {
             it.copy(
                 markerTransformProgress = 0f,
+                markerTransformationSequence = emptyList(),
                 markerTranslationX = 0.16f,
                 markerTranslationY = 0.1f,
+                markerRotationCenterX = 0f,
+                markerRotationCenterY = 0f,
                 markerRotationDegrees = 45f,
                 markerRotationClockwise = false,
                 markerReflectionLine = MarkerReflectionLine.YAxis,
+                markerDilationCenterX = 0f,
+                markerDilationCenterY = 0f,
                 markerDilationScale = 1.4f,
                 markerHorizontalStretch = 1.4f,
                 markerVerticalStretch = 0.7f,
@@ -324,55 +379,545 @@ class ArViewerViewModel : ViewModel() {
 
     fun addMarker2dShape(shape: Marker2dShapeTool) {
         _uiState.update { state ->
-            val construction = when (shape) {
-                Marker2dShapeTool.Point -> state.constructionGeometry.addMarkerPoint()
-                Marker2dShapeTool.Line -> state.constructionGeometry.addMarkerLine()
-                Marker2dShapeTool.Segment -> state.constructionGeometry.addMarkerLine()
-                Marker2dShapeTool.Ray -> state.constructionGeometry.addMarkerLine()
-                Marker2dShapeTool.Triangle -> state.constructionGeometry.addMarkerTriangle()
-                Marker2dShapeTool.Square -> state.constructionGeometry.addMarkerSquare()
-                Marker2dShapeTool.Rectangle -> state.constructionGeometry.addMarkerSquare()
-                Marker2dShapeTool.Circle -> state.constructionGeometry.addMarkerCircle()
-                Marker2dShapeTool.Ellipse -> state.constructionGeometry.addMarkerCircle()
-                Marker2dShapeTool.Polygon -> state.constructionGeometry.addMarkerSquare()
-                Marker2dShapeTool.RegularPolygon -> state.constructionGeometry.addMarkerSquare()
-                Marker2dShapeTool.Angle -> state.constructionGeometry.addMarkerTriangle()
-                Marker2dShapeTool.Arc -> state.constructionGeometry.addMarkerCircle()
-                Marker2dShapeTool.Perpendicular -> state.constructionGeometry.addMarkerLine()
-                Marker2dShapeTool.Parallel -> state.constructionGeometry.addMarkerLine()
-                Marker2dShapeTool.Clear -> ConstructionGeometryState()
+            if (shape == Marker2dShapeTool.Clear) {
+                return@update state.copy(
+                    markerMathActivity = MarkerMathActivity.Geometry2D,
+                    constructionGeometry = ConstructionGeometryState(),
+                    resolvedConstructions = emptyList(),
+                    marker2dActiveTool = null,
+                    marker2dDraftPoints = emptyList(),
+                    marker2dSelectedObjectId = null,
+                    userMessage = UiMessage("2D geometry cleared.")
+                )
             }
             state.copy(
-                markerMathActivity = MarkerMathActivity.Geometry2D,
+                markerMathActivity = if (state.markerMathActivity == MarkerMathActivity.Transformations) MarkerMathActivity.Transformations else MarkerMathActivity.Geometry2D,
+                markerTransformShape = if (state.markerMathActivity == MarkerMathActivity.Transformations) shape.toTransformShape() else state.markerTransformShape,
+                marker2dActiveTool = shape,
+                marker2dDraftPoints = emptyList(),
+                enabledMathArFeatures = state.enabledMathArFeatures + MathArFeature.MultiObjectConstraints,
+                userMessage = UiMessage("${shape.label}: tap ${shape.requiredPointPrompt()} on G01.")
+            )
+        }
+    }
+
+    fun onMarker2dWorkspaceTap(x: Float, y: Float) {
+        _uiState.update { state ->
+            val tool = state.marker2dActiveTool ?: return@update state.selectNearestMarker2dObject(x, y)
+            val snapped = state.snapMarker2dPoint(Marker2dPointState(x, y))
+            val draft = state.marker2dDraftPoints + snapped
+            val shouldFinish = tool.fixedPointCount()?.let { draft.size >= it } == true
+            if (shouldFinish) {
+                val construction = state.constructionGeometry.addMarkerShape(tool, draft)
+                state.copy(
+                    markerMathActivity = MarkerMathActivity.Geometry2D,
+                    constructionGeometry = construction,
+                    resolvedConstructions = constructionEngine.resolve(construction),
+                    marker2dDraftPoints = emptyList(),
+                    marker2dSelectedObjectId = construction.objects.lastOrNull()?.id,
+                    marker2dActiveTool = if (tool == Marker2dShapeTool.Polygon) tool else null,
+                    userMessage = UiMessage("${tool.label} placed.")
+                )
+            } else {
+                state.copy(
+                    markerMathActivity = MarkerMathActivity.Geometry2D,
+                    marker2dDraftPoints = draft,
+                    userMessage = UiMessage("${tool.label}: ${draft.size}/${tool.fixedPointCount() ?: 3} points.")
+                )
+            }
+        }
+    }
+
+    fun finishMarker2dDraft() {
+        _uiState.update { state ->
+            val tool = state.marker2dActiveTool ?: return@update state
+            if (state.marker2dDraftPoints.isEmpty()) return@update state
+            if (tool == Marker2dShapeTool.Polygon && state.marker2dDraftPoints.size < 3) {
+                return@update state.copy(userMessage = UiMessage("Polygon needs at least 3 points."))
+            }
+            val construction = state.constructionGeometry.addMarkerShape(tool, state.marker2dDraftPoints)
+            state.copy(
                 constructionGeometry = construction,
                 resolvedConstructions = constructionEngine.resolve(construction),
-                enabledMathArFeatures = state.enabledMathArFeatures + MathArFeature.MultiObjectConstraints,
-                userMessage = UiMessage(if (shape == Marker2dShapeTool.Clear) "2D geometry cleared." else "${shape.label} added on G01.")
+                marker2dActiveTool = null,
+                marker2dDraftPoints = emptyList(),
+                marker2dSelectedObjectId = construction.objects.lastOrNull()?.id,
+                userMessage = UiMessage("${tool.label} finished.")
+            )
+        }
+    }
+
+    fun cancelMarker2dDraft() {
+        _uiState.update { it.copy(marker2dActiveTool = null, marker2dDraftPoints = emptyList(), userMessage = UiMessage("Placement cancelled.")) }
+    }
+
+    fun selectNextMarker2dObject() {
+        _uiState.update { state ->
+            val visible = state.constructionGeometry.objects.filter { it.visible }
+            if (visible.isEmpty()) return@update state.copy(userMessage = UiMessage("No 2D object to select."))
+            val current = visible.indexOfFirst { it.id == state.marker2dSelectedObjectId }
+            val selected = visible[(current + 1).floorMod(visible.size)]
+            state.copy(
+                marker2dSelectedObjectId = selected.id,
+                constructionGeometry = state.constructionGeometry.copy(selectedObjectId = selected.id),
+                userMessage = UiMessage("${selected.label} selected.")
+            )
+        }
+    }
+
+    fun moveSelectedMarker2dObject(dx: Float, dy: Float) {
+        _uiState.update { state ->
+            if (state.marker2dLockShape) return@update state.copy(userMessage = UiMessage("Shape locked."))
+            val selected = state.selectedMarker2dObject() ?: return@update state
+            val moved = state.constructionGeometry.copy(
+                points = state.constructionGeometry.points.map { point ->
+                    if (point.id in selected.pointIds) {
+                        point.copy(position = point.position.plus(Vector3Value(dx.toDouble(), 0.0, dy.toDouble())))
+                    } else point
+                },
+                revision = state.constructionGeometry.revision + 1
+            )
+            state.copy(constructionGeometry = moved, resolvedConstructions = constructionEngine.resolve(moved))
+        }
+    }
+
+    fun rotateSelectedMarker2dObject(deltaDegrees: Float) {
+        _uiState.update { state ->
+            if (state.marker2dLockShape) return@update state.copy(userMessage = UiMessage("Shape locked."))
+            val selected = state.selectedMarker2dObject() ?: return@update state
+            val pointMap = state.constructionGeometry.pointMap
+            val selectedPoints = selected.pointIds.mapNotNull { pointMap[it] }
+            val center = selectedPoints.centroid()
+            val angle = Math.toRadians(deltaDegrees.toDouble())
+            val rotated = state.constructionGeometry.copy(
+                points = state.constructionGeometry.points.map { point ->
+                    if (point.id in selected.pointIds) {
+                        val px = point.position.x - center.x
+                        val pz = point.position.z - center.z
+                        point.copy(
+                            position = Vector3Value(
+                                center.x + px * kotlin.math.cos(angle) - pz * kotlin.math.sin(angle),
+                                point.position.y,
+                                center.z + px * kotlin.math.sin(angle) + pz * kotlin.math.cos(angle)
+                            )
+                        )
+                    } else point
+                },
+                revision = state.constructionGeometry.revision + 1
+            )
+            state.copy(constructionGeometry = rotated, resolvedConstructions = constructionEngine.resolve(rotated))
+        }
+    }
+
+    fun scaleSelectedMarker2dObject(factor: Float) {
+        _uiState.update { state ->
+            if (state.marker2dLockShape) return@update state.copy(userMessage = UiMessage("Shape locked."))
+            val selected = state.selectedMarker2dObject() ?: return@update state
+            val pointMap = state.constructionGeometry.pointMap
+            val selectedPoints = selected.pointIds.mapNotNull { pointMap[it] }
+            val center = selectedPoints.centroid()
+            val scaled = state.constructionGeometry.copy(
+                points = state.constructionGeometry.points.map { point ->
+                    if (point.id in selected.pointIds) {
+                        point.copy(
+                            position = Vector3Value(
+                                center.x + (point.position.x - center.x) * factor,
+                                point.position.y,
+                                center.z + (point.position.z - center.z) * factor
+                            )
+                        )
+                    } else point
+                },
+                revision = state.constructionGeometry.revision + 1
+            )
+            state.copy(constructionGeometry = scaled, resolvedConstructions = constructionEngine.resolve(scaled))
+        }
+    }
+
+    fun duplicateSelectedMarker2dObject() {
+        _uiState.update { state ->
+            val selected = state.selectedMarker2dObject() ?: return@update state
+            val sourcePoints = selected.pointIds.mapNotNull { state.constructionGeometry.pointMap[it] }
+            val offset = Vector3Value(0.045, 0.0, 0.045)
+            val base = System.currentTimeMillis()
+            val copiedPoints = sourcePoints.mapIndexed { index, point ->
+                point.copy(
+                    id = "marker-copy-$base-$index",
+                    label = "${point.label}'",
+                    position = point.position.plus(offset)
+                )
+            }
+            val copied = selected.copy(
+                id = "marker-copy-$base",
+                label = "${selected.label} copy",
+                pointIds = copiedPoints.map { it.id },
+                visible = true,
+                locked = false
+            )
+            val construction = state.constructionGeometry.copy(
+                points = state.constructionGeometry.points + copiedPoints,
+                objects = state.constructionGeometry.objects + copied,
+                selectedObjectId = copied.id,
+                revision = state.constructionGeometry.revision + 1
+            )
+            state.copy(
+                constructionGeometry = construction,
+                resolvedConstructions = constructionEngine.resolve(construction),
+                marker2dSelectedObjectId = copied.id,
+                userMessage = UiMessage("${selected.label} duplicated.")
+            )
+        }
+    }
+
+    fun hideSelectedMarker2dObject() {
+        _uiState.update { state ->
+            val selected = state.selectedMarker2dObject() ?: return@update state
+            val construction = state.constructionGeometry.copy(
+                objects = state.constructionGeometry.objects.map { if (it.id == selected.id) it.copy(visible = !it.visible) else it },
+                revision = state.constructionGeometry.revision + 1
+            )
+            state.copy(constructionGeometry = construction, resolvedConstructions = constructionEngine.resolve(construction))
+        }
+    }
+
+    fun deleteSelectedMarker2dObject() {
+        _uiState.update { state ->
+            val selected = state.selectedMarker2dObject() ?: return@update state
+            val usedByOtherObjects = state.constructionGeometry.objects
+                .filterNot { it.id == selected.id }
+                .flatMap { it.pointIds }
+                .toSet()
+            val removablePointIds = selected.pointIds.filterNot { it in usedByOtherObjects }.toSet()
+            val construction = state.constructionGeometry.copy(
+                points = state.constructionGeometry.points.filterNot { it.id in removablePointIds },
+                objects = state.constructionGeometry.objects.filterNot { it.id == selected.id },
+                selectedObjectId = null,
+                revision = state.constructionGeometry.revision + 1
+            )
+            state.copy(
+                constructionGeometry = construction,
+                resolvedConstructions = constructionEngine.resolve(construction),
+                marker2dSelectedObjectId = construction.objects.lastOrNull()?.id,
+                userMessage = UiMessage("${selected.label} deleted.")
+            )
+        }
+    }
+
+    fun toggleMarker2dDisplay(option: Marker2dDisplayOption) {
+        _uiState.update {
+            when (option) {
+                Marker2dDisplayOption.Labels -> it.copy(marker2dShowLabels = !it.marker2dShowLabels)
+                Marker2dDisplayOption.Vertices -> it.copy(marker2dShowVertices = !it.marker2dShowVertices)
+                Marker2dDisplayOption.Measurements -> it.copy(marker2dShowMeasurements = !it.marker2dShowMeasurements)
+                Marker2dDisplayOption.SnapGrid -> it.copy(marker2dSnapToGrid = !it.marker2dSnapToGrid)
+                Marker2dDisplayOption.SnapPoints -> it.copy(marker2dSnapToPoints = !it.marker2dSnapToPoints)
+                Marker2dDisplayOption.LockShape -> it.copy(marker2dLockShape = !it.marker2dLockShape)
+                Marker2dDisplayOption.ConstructionLines -> it.copy(marker2dShowConstructionLines = !it.marker2dShowConstructionLines)
+            }
+        }
+    }
+
+    fun selectMarker2dConstraint(tool: Marker2dConstraintTool) {
+        _uiState.update { state ->
+            val selected = state.selectedMarker2dObject()
+            val construction = when (tool) {
+                Marker2dConstraintTool.Parallel -> selected?.let { constructionEngine.addConstraint(state.constructionGeometry, ConstructionConstraintKind.Parallel, listOf(it.id)) }
+                Marker2dConstraintTool.Perpendicular -> selected?.let { constructionEngine.addConstraint(state.constructionGeometry, ConstructionConstraintKind.Perpendicular, listOf(it.id)) }
+                Marker2dConstraintTool.EqualLengths -> selected?.let { constructionEngine.addConstraint(state.constructionGeometry, ConstructionConstraintKind.EqualLength, listOf(it.id)) }
+                Marker2dConstraintTool.FixedLength,
+                Marker2dConstraintTool.FixedRadius -> selected?.let { constructionEngine.addConstraint(state.constructionGeometry, ConstructionConstraintKind.FixedDistance, listOf(it.id)) }
+                Marker2dConstraintTool.EqualAngles -> selected?.let { constructionEngine.addConstraint(state.constructionGeometry, ConstructionConstraintKind.FixedAngle, listOf(it.id)) }
+                else -> state.constructionGeometry
+            } ?: state.constructionGeometry
+            state.copy(
+                constructionGeometry = construction,
+                resolvedConstructions = constructionEngine.resolve(construction),
+                marker2dActiveConstraint = tool,
+                userMessage = UiMessage("${tool.label()} constraint active.")
             )
         }
     }
 
     fun addMarker3dObject(definitionId: String) {
-        val definition = DefaultMathObjectRegistry.getDefinition(definitionId) ?: return
-        val current = _uiState.value
-        val transform = Shape3dEngine.placementPlan(
-            Shape3dPlacementRequest(
-                definitionId = definitionId,
-                anchorMode = Shape3dAnchorMode.MarkerImage,
-                normalizedX = ((current.mathScene.objects.size % 3) - 1) * 0.42,
-                normalizedZ = (current.mathScene.objects.size / 3) * 0.32 - 0.12,
-                snapToGrid = true
-            )
-        ).transform
-        mutate("Add ${definition.displayName}", "${definition.displayName} added on G01.") {
-            SceneMutations.addObject(it, definitionId, transform)
-        }
+        val tool = definitionId.toMarker3dShapeTool()
         _uiState.update {
             it.copy(
                 markerMathActivity = MarkerMathActivity.Geometry3D,
-                selectedObjectType = definition.type,
-                selectedDefinitionId = definition.definitionId,
-                sceneInteractionMode = SceneInteractionMode.Select
+                marker3dPreviewTool = tool,
+                marker3dPreviewX = ((it.marker3dSolids.size % 3) - 1) * 0.16f,
+                marker3dPreviewZ = (it.marker3dSolids.size / 3) * 0.14f,
+                marker3dPreviewLift = tool.defaultLift(),
+                userMessage = UiMessage("${tool.label()}: preview ready. Tap G01 or press Place.")
+            )
+        }
+    }
+
+    fun onMarker3dWorkspaceTap(x: Float, z: Float) {
+        _uiState.update { state ->
+            val selected = state.marker3dSolids.firstOrNull { it.selected }
+            if (state.marker3dPreviewTool != null) {
+                return@update state.copy(marker3dPreviewX = x, marker3dPreviewZ = z).placeMarker3dPreview()
+            }
+            if (selected != null) {
+                val nearest = state.marker3dSolids
+                    .filter { it.visible }
+                    .minByOrNull { solid ->
+                        val dx = solid.x - x
+                        val dz = solid.z - z
+                        dx * dx + dz * dz
+                    }
+                return@update state.copy(
+                    marker3dSolids = state.marker3dSolids.map { it.copy(selected = it.id == nearest?.id) },
+                    marker3dSelectedSolidId = nearest?.id,
+                    userMessage = nearest?.let { UiMessage("${it.label} selected.") }
+                )
+            }
+            state
+        }
+    }
+
+    fun placeMarker3dPreview() {
+        _uiState.update { it.placeMarker3dPreview() }
+    }
+
+    fun cancelMarker3dPreview() {
+        _uiState.update { it.copy(marker3dPreviewTool = null, userMessage = UiMessage("3D preview cancelled.")) }
+    }
+
+    fun moveMarker3dPreview(dx: Float, dz: Float) {
+        _uiState.update { it.copy(marker3dPreviewX = (it.marker3dPreviewX + dx).coerceIn(-0.34f, 0.34f), marker3dPreviewZ = (it.marker3dPreviewZ + dz).coerceIn(-0.34f, 0.34f)) }
+    }
+
+    fun selectNextMarker3dSolid() {
+        _uiState.update { state ->
+            val visible = state.marker3dSolids.filter { it.visible }
+            if (visible.isEmpty()) return@update state.copy(userMessage = UiMessage("No 3D solid to select."))
+            val current = visible.indexOfFirst { it.id == state.marker3dSelectedSolidId }
+            val selected = visible[(current + 1).floorMod(visible.size)]
+            state.copy(
+                marker3dSolids = state.marker3dSolids.map { it.copy(selected = it.id == selected.id) },
+                marker3dSelectedSolidId = selected.id,
+                userMessage = UiMessage("${selected.label} selected.")
+            )
+        }
+    }
+
+    fun moveSelectedMarker3dSolid(dx: Float, dz: Float, dy: Float = 0f) {
+        _uiState.update { state ->
+            state.updateSelectedMarker3dSolid { solid ->
+                solid.copy(x = (solid.x + dx).coerceIn(-0.4f, 0.4f), z = (solid.z + dz).coerceIn(-0.4f, 0.4f), lift = (solid.lift + dy).coerceIn(0.02f, 0.5f))
+            }
+        }
+    }
+
+    fun rotateSelectedMarker3dSolid(axis: Marker3dAxis, degrees: Float) {
+        _uiState.update { state ->
+            state.updateSelectedMarker3dSolid { solid ->
+                when (axis) {
+                    Marker3dAxis.X -> solid.copy(rotationX = normalizeMarkerAngle(solid.rotationX + degrees))
+                    Marker3dAxis.Y -> solid.copy(rotationY = normalizeMarkerAngle(solid.rotationY + degrees))
+                    Marker3dAxis.Z -> solid.copy(rotationZ = normalizeMarkerAngle(solid.rotationZ + degrees))
+                }
+            }
+        }
+    }
+
+    fun scaleSelectedMarker3dSolid(factor: Float) {
+        _uiState.update { state ->
+            state.updateSelectedMarker3dSolid { solid -> solid.copy(scale = (solid.scale * factor).coerceIn(0.35f, 2.8f)) }
+        }
+    }
+
+    fun updateSelectedMarker3dParameter(parameterId: String, value: Float) {
+        _uiState.update { state ->
+            state.updateSelectedMarker3dSolid { solid ->
+                solid.copy(parameters = solid.parameters + (parameterId to value.coerceIn(0.02f, 1.0f)))
+            }
+        }
+    }
+
+    fun duplicateSelectedMarker3dSolid() {
+        _uiState.update { state ->
+            val selected = state.marker3dSolids.firstOrNull { it.selected } ?: return@update state
+            val copy = selected.copy(
+                id = "marker-solid-${System.currentTimeMillis()}",
+                label = "${selected.label} copy",
+                x = (selected.x + 0.08f).coerceIn(-0.34f, 0.34f),
+                z = (selected.z + 0.08f).coerceIn(-0.34f, 0.34f),
+                selected = true,
+                locked = false,
+                visible = true
+            )
+            state.copy(
+                marker3dSolids = state.marker3dSolids.map { it.copy(selected = false) } + copy,
+                marker3dSelectedSolidId = copy.id,
+                userMessage = UiMessage("${selected.label} duplicated.")
+            )
+        }
+    }
+
+    fun toggleSelectedMarker3dVisibility() {
+        _uiState.update { state ->
+            state.updateSelectedMarker3dSolid(ignoreLock = true) { it.copy(visible = !it.visible) }
+        }
+    }
+
+    fun toggleSelectedMarker3dLock() {
+        _uiState.update { state ->
+            state.updateSelectedMarker3dSolid(ignoreLock = true) { it.copy(locked = !it.locked) }
+        }
+    }
+
+    fun deleteSelectedMarker3dSolid() {
+        _uiState.update { state ->
+            val selected = state.marker3dSolids.firstOrNull { it.selected } ?: return@update state
+            val remaining = state.marker3dSolids.filterNot { it.id == selected.id }
+            state.copy(
+                marker3dSolids = remaining.mapIndexed { index, solid -> solid.copy(selected = index == remaining.lastIndex) },
+                marker3dSelectedSolidId = remaining.lastOrNull()?.id,
+                userMessage = UiMessage("${selected.label} deleted.")
+            )
+        }
+    }
+
+    fun resetSelectedMarker3dSolid() {
+        _uiState.update { state ->
+            state.updateSelectedMarker3dSolid(ignoreLock = true) {
+                it.copy(lift = it.tool.defaultLift(), scale = 1f, rotationX = 0f, rotationY = 0f, rotationZ = 0f, exploded = false, sectionMode = Marker3dSectionMode.None, clipping = 0.5f)
+            }
+        }
+    }
+
+    fun toggleMarker3dOverlay(option: Marker3dOverlayOption) {
+        _uiState.update {
+            it.copy(marker3dOverlays = if (option in it.marker3dOverlays) it.marker3dOverlays - option else it.marker3dOverlays + option)
+        }
+    }
+
+    fun toggleSelectedMarker3dExploded() {
+        _uiState.update { state -> state.updateSelectedMarker3dSolid { it.copy(exploded = !it.exploded) } }
+    }
+
+    fun setSelectedMarker3dSection(mode: Marker3dSectionMode) {
+        _uiState.update { state -> state.updateSelectedMarker3dSolid { it.copy(sectionMode = mode) } }
+    }
+
+    fun setSelectedMarker3dClipping(value: Float) {
+        _uiState.update { state -> state.updateSelectedMarker3dSolid { it.copy(clipping = value.coerceIn(0f, 1f)) } }
+    }
+
+    fun toggleSelectedMarker3dNet() {
+        _uiState.update { state -> state.updateSelectedMarker3dSolid { it.copy(showNet = !it.showNet) } }
+    }
+
+    fun selectMarkerCoordinateTool(tool: MarkerCoordinateTool) {
+        _uiState.update { it.copy(markerMathActivity = MarkerMathActivity.CoordinateLab, markerCoordinateTool = tool, userMessage = UiMessage("${tool.label()}: use coordinates or tap G01.")) }
+    }
+
+    fun addMarkerCoordinatePoint(x: Float, y: Float) {
+        _uiState.update { state ->
+            val point = state.markerCoordinatePoint(x, y)
+            state.copy(
+                markerMathActivity = MarkerMathActivity.CoordinateLab,
+                markerCoordinatePoints = state.markerCoordinatePoints.map { it.copy(selected = false) } + point,
+                markerCoordinateSelectedPointIds = (state.markerCoordinateSelectedPointIds + point.id).takeLast(3),
+                userMessage = UiMessage("${point.label} = (${point.x.shortCoord()}, ${point.y.shortCoord()})")
+            ).applyMarkerCoordinateTool()
+        }
+    }
+
+    fun onMarkerCoordinateWorkspaceTap(localX: Float, localY: Float) {
+        val coordinateX = localX / MARKER_COORDINATE_UNIT
+        val coordinateY = localY / MARKER_COORDINATE_UNIT
+        _uiState.update { state ->
+            val nearest = state.nearestMarkerCoordinatePoint(coordinateX, coordinateY)
+            if (nearest != null && state.markerCoordinateTool !in setOf(MarkerCoordinateTool.PlotPoint, MarkerCoordinateTool.PlotMultiplePoints)) {
+                return@update state.toggleMarkerCoordinatePoint(nearest.id)
+            }
+            val point = state.markerCoordinatePoint(coordinateX, coordinateY)
+            state.copy(
+                markerMathActivity = MarkerMathActivity.CoordinateLab,
+                markerCoordinatePoints = state.markerCoordinatePoints.map { it.copy(selected = false) } + point,
+                markerCoordinateSelectedPointIds = (state.markerCoordinateSelectedPointIds + point.id).takeLast(3),
+                userMessage = UiMessage("${point.label} plotted.")
+            ).applyMarkerCoordinateTool()
+        }
+    }
+
+    fun selectNextMarkerCoordinatePoint() {
+        _uiState.update { state ->
+            if (state.markerCoordinatePoints.isEmpty()) return@update state.copy(userMessage = UiMessage("No coordinate points yet."))
+            val current = state.markerCoordinatePoints.indexOfFirst { it.id in state.markerCoordinateSelectedPointIds.takeLast(1) }
+            val point = state.markerCoordinatePoints[(current + 1).floorMod(state.markerCoordinatePoints.size)]
+            state.toggleMarkerCoordinatePoint(point.id)
+        }
+    }
+
+    fun moveSelectedMarkerCoordinatePoint(dx: Float, dy: Float) {
+        _uiState.update { state ->
+            val selected = state.markerCoordinateSelectedPointIds.lastOrNull() ?: return@update state.copy(userMessage = UiMessage("Select a point first."))
+            state.copy(
+                markerCoordinatePoints = state.markerCoordinatePoints.map { point ->
+                    if (point.id == selected) point.copy(x = (point.x + dx).snapIf(state.markerCoordinateSnapToInteger), y = (point.y + dy).snapIf(state.markerCoordinateSnapToInteger)) else point
+                }
+            )
+        }
+    }
+
+    fun setSelectedMarkerCoordinatePoint(x: Float, y: Float) {
+        _uiState.update { state ->
+            val selected = state.markerCoordinateSelectedPointIds.lastOrNull() ?: return@update state.copy(userMessage = UiMessage("Select a point first."))
+            state.copy(
+                markerCoordinatePoints = state.markerCoordinatePoints.map { point ->
+                    if (point.id == selected) point.copy(x = x.snapIf(state.markerCoordinateSnapToInteger), y = y.snapIf(state.markerCoordinateSnapToInteger)) else point
+                }
+            )
+        }
+    }
+
+    fun applyMarkerCoordinateTool() {
+        _uiState.update { it.applyMarkerCoordinateTool() }
+    }
+
+    fun toggleMarkerCoordinateSnap() {
+        _uiState.update { it.copy(markerCoordinateSnapToInteger = !it.markerCoordinateSnapToInteger) }
+    }
+
+    fun toggleMarkerCoordinateFormat() {
+        _uiState.update { it.copy(markerCoordinateFractional = !it.markerCoordinateFractional) }
+    }
+
+    fun toggleMarkerCoordinateSlopeTriangle() {
+        _uiState.update { it.copy(markerCoordinateShowSlopeTriangle = !it.markerCoordinateShowSlopeTriangle) }
+    }
+
+    fun transformMarkerCoordinateSelection(kind: MarkerCoordinateTool, amount: Float) {
+        _uiState.update { state ->
+            val selectedIds = state.markerCoordinateSelectedPointIds.toSet().ifEmpty { state.markerCoordinatePoints.map { it.id }.toSet() }
+            val selectedPoints = state.markerCoordinatePoints.filter { it.id in selectedIds }
+            if (selectedPoints.isEmpty()) return@update state.copy(userMessage = UiMessage("Select points to transform."))
+            val cx = selectedPoints.map { it.x }.average().toFloat()
+            val cy = selectedPoints.map { it.y }.average().toFloat()
+            val radians = Math.toRadians(amount.toDouble())
+            state.copy(
+                markerCoordinateTool = kind,
+                markerCoordinatePoints = state.markerCoordinatePoints.map { point ->
+                    if (point.id !in selectedIds) point else when (kind) {
+                        MarkerCoordinateTool.Translation -> point.copy(x = (point.x + amount).snapIf(state.markerCoordinateSnapToInteger), y = (point.y + amount).snapIf(state.markerCoordinateSnapToInteger))
+                        MarkerCoordinateTool.Reflection -> point.copy(x = -point.x, y = point.y)
+                        MarkerCoordinateTool.Rotation -> {
+                            val px = point.x - cx
+                            val py = point.y - cy
+                            point.copy(
+                                x = (cx + px * kotlin.math.cos(radians).toFloat() - py * kotlin.math.sin(radians).toFloat()).snapIf(state.markerCoordinateSnapToInteger),
+                                y = (cy + px * kotlin.math.sin(radians).toFloat() + py * kotlin.math.cos(radians).toFloat()).snapIf(state.markerCoordinateSnapToInteger)
+                            )
+                        }
+                        MarkerCoordinateTool.Dilation -> point.copy(x = (cx + (point.x - cx) * amount).snapIf(state.markerCoordinateSnapToInteger), y = (cy + (point.y - cy) * amount).snapIf(state.markerCoordinateSnapToInteger))
+                        else -> point
+                    }
+                },
+                userMessage = UiMessage("${kind.label()} applied.")
             )
         }
     }
@@ -386,7 +931,14 @@ class ArViewerViewModel : ViewModel() {
                 constructionGeometry = ConstructionGeometryState(),
                 resolvedConstructions = emptyList(),
                 pickedPoints = emptyList(),
-                rulerAnchors = emptyList()
+                rulerAnchors = emptyList(),
+                marker3dPreviewTool = null,
+                marker3dSolids = emptyList(),
+                marker3dSelectedSolidId = null,
+                markerCoordinatePoints = emptyList(),
+                markerCoordinateShapes = emptyList(),
+                markerCoordinateSelectedPointIds = emptyList(),
+                markerCoordinateSelectedShapeId = null
             )
         }
     }
@@ -858,6 +1410,18 @@ class ArViewerViewModel : ViewModel() {
         }
     }
 
+    fun resetMarkerGraphView() {
+        _uiState.update { state ->
+            state.recompileMarkerGraphs(ArGraphDomain()).copy(
+                markerGraphTraceProgress = 0.5f,
+                markerGraphTraceMode = MarkerGraphTraceMode.Off,
+                markerGraphShowDerivative = false,
+                markerGraphShowIntegralArea = false,
+                userMessage = UiMessage("Graph view reset.")
+            )
+        }
+    }
+
     fun zoomMarkerGraph(factor: Double) {
         _uiState.update { state ->
             val domain = state.arGraphDomain.zoomed(factor)
@@ -875,6 +1439,53 @@ class ArViewerViewModel : ViewModel() {
             )
             state.recompileMarkerGraphs(domain).copy(userMessage = UiMessage("Graph panned."))
         }
+    }
+
+    fun updateMarkerGraphDomainXMin(value: Float) = updateMarkerGraphDomain { it.copy(xMin = value.toDouble()) }
+    fun updateMarkerGraphDomainXMax(value: Float) = updateMarkerGraphDomain { it.copy(xMax = value.toDouble()) }
+    fun updateMarkerGraphDomainYMin(value: Float) = updateMarkerGraphDomain { it.copy(yMin = value.toDouble()) }
+    fun updateMarkerGraphDomainYMax(value: Float) = updateMarkerGraphDomain { it.copy(yMax = value.toDouble()) }
+
+    private fun updateMarkerGraphDomain(transform: (ArGraphDomain) -> ArGraphDomain) {
+        _uiState.update { state ->
+            val raw = transform(state.arGraphDomain)
+            val safe = raw.copy(
+                xMin = minOf(raw.xMin, raw.xMax - 0.25),
+                xMax = maxOf(raw.xMax, raw.xMin + 0.25),
+                yMin = minOf(raw.yMin, raw.yMax - 0.25),
+                yMax = maxOf(raw.yMax, raw.yMin + 0.25),
+                valueClamp = maxOf(raw.valueClamp, maxOf(kotlin.math.abs(raw.yMin), kotlin.math.abs(raw.yMax)))
+            )
+            state.recompileMarkerGraphs(safe).copy(userMessage = UiMessage("Graph range updated."))
+        }
+    }
+
+    fun toggleMarkerGraphGrid() {
+        _uiState.update { it.copy(markerGraphShowGrid = !it.markerGraphShowGrid) }
+    }
+
+    fun toggleMarkerGraphLabels() {
+        _uiState.update { it.copy(markerGraphShowLabels = !it.markerGraphShowLabels) }
+    }
+
+    fun toggleMarkerGraphIntercepts() {
+        _uiState.update { it.copy(markerGraphShowIntercepts = !it.markerGraphShowIntercepts) }
+    }
+
+    fun toggleMarkerGraphExtrema() {
+        _uiState.update { it.copy(markerGraphShowExtrema = !it.markerGraphShowExtrema) }
+    }
+
+    fun toggleMarkerGraphDiscontinuities() {
+        _uiState.update { it.copy(markerGraphShowDiscontinuities = !it.markerGraphShowDiscontinuities) }
+    }
+
+    fun toggleMarkerGraphDerivative() {
+        _uiState.update { it.copy(markerGraphShowDerivative = !it.markerGraphShowDerivative) }
+    }
+
+    fun toggleMarkerGraphIntegralArea() {
+        _uiState.update { it.copy(markerGraphShowIntegralArea = !it.markerGraphShowIntegralArea) }
     }
 
     fun toggleMarkerGraphOption(option: MarkerGraphTraceMode) {
@@ -2074,6 +2685,398 @@ enum class Marker2dShapeTool(val label: String) {
     Clear("Clear")
 }
 
+enum class Marker2dDisplayOption {
+    Labels,
+    Vertices,
+    Measurements,
+    SnapGrid,
+    SnapPoints,
+    LockShape,
+    ConstructionLines
+}
+
+enum class Marker3dAxis { X, Y, Z }
+
+private fun String.toMarker3dShapeTool(): Marker3dShapeTool = when (this) {
+    "cube" -> Marker3dShapeTool.Cube
+    "cuboid" -> Marker3dShapeTool.Cuboid
+    "sphere" -> Marker3dShapeTool.Sphere
+    "hemisphere" -> Marker3dShapeTool.Hemisphere
+    "cylinder" -> Marker3dShapeTool.Cylinder
+    "cone" -> Marker3dShapeTool.Cone
+    "pyramid" -> Marker3dShapeTool.Pyramid
+    "triangular-prism" -> Marker3dShapeTool.TriangularPrism
+    "rectangular-prism" -> Marker3dShapeTool.RectangularPrism
+    "tetrahedron" -> Marker3dShapeTool.Tetrahedron
+    "torus" -> Marker3dShapeTool.Torus
+    "frustum" -> Marker3dShapeTool.Frustum
+    "custom-prism" -> Marker3dShapeTool.CustomPrism
+    "custom-pyramid" -> Marker3dShapeTool.CustomPyramid
+    else -> Marker3dShapeTool.Cube
+}
+
+private fun Marker3dShapeTool.label(): String = when (this) {
+    Marker3dShapeTool.Cube -> "Cube"
+    Marker3dShapeTool.Cuboid -> "Cuboid"
+    Marker3dShapeTool.Sphere -> "Sphere"
+    Marker3dShapeTool.Hemisphere -> "Hemisphere"
+    Marker3dShapeTool.Cylinder -> "Cylinder"
+    Marker3dShapeTool.Cone -> "Cone"
+    Marker3dShapeTool.Pyramid -> "Pyramid"
+    Marker3dShapeTool.TriangularPrism -> "Triangular prism"
+    Marker3dShapeTool.RectangularPrism -> "Rectangular prism"
+    Marker3dShapeTool.Tetrahedron -> "Tetrahedron"
+    Marker3dShapeTool.Torus -> "Torus"
+    Marker3dShapeTool.Frustum -> "Frustum"
+    Marker3dShapeTool.CustomPrism -> "Custom prism"
+    Marker3dShapeTool.CustomPyramid -> "Custom pyramid"
+}
+
+private fun Marker3dShapeTool.defaultLift(): Float = when (this) {
+    Marker3dShapeTool.Cube,
+    Marker3dShapeTool.Cuboid,
+    Marker3dShapeTool.RectangularPrism,
+    Marker3dShapeTool.TriangularPrism,
+    Marker3dShapeTool.CustomPrism -> 0.1f
+    Marker3dShapeTool.Sphere,
+    Marker3dShapeTool.Hemisphere,
+    Marker3dShapeTool.Torus -> 0.12f
+    else -> 0.11f
+}
+
+private fun Marker3dShapeTool.defaultParameters(): Map<String, Float> = when (this) {
+    Marker3dShapeTool.Cube -> mapOf("side" to 0.16f)
+    Marker3dShapeTool.Cuboid,
+    Marker3dShapeTool.RectangularPrism -> mapOf("length" to 0.22f, "width" to 0.14f, "height" to 0.16f)
+    Marker3dShapeTool.Sphere,
+    Marker3dShapeTool.Hemisphere,
+    Marker3dShapeTool.Torus -> mapOf("radius" to 0.1f)
+    Marker3dShapeTool.Cylinder,
+    Marker3dShapeTool.Cone,
+    Marker3dShapeTool.Frustum -> mapOf("radius" to 0.09f, "height" to 0.2f)
+    Marker3dShapeTool.Pyramid,
+    Marker3dShapeTool.CustomPyramid -> mapOf("base" to 0.2f, "height" to 0.2f)
+    Marker3dShapeTool.TriangularPrism -> mapOf("base" to 0.2f, "height" to 0.16f, "length" to 0.22f)
+    Marker3dShapeTool.Tetrahedron -> mapOf("side" to 0.18f)
+    Marker3dShapeTool.CustomPrism -> mapOf("base" to 0.18f, "height" to 0.16f, "length" to 0.24f)
+}
+
+private fun ArViewerUiState.placeMarker3dPreview(): ArViewerUiState {
+    val tool = marker3dPreviewTool ?: return this
+    val solid = Marker3dSolidState(
+        id = "marker-solid-${System.currentTimeMillis()}-${marker3dSolids.size}",
+        tool = tool,
+        label = "${tool.label()} ${marker3dSolids.count { it.tool == tool } + 1}",
+        x = marker3dPreviewX,
+        z = marker3dPreviewZ,
+        lift = marker3dPreviewLift,
+        parameters = tool.defaultParameters(),
+        selected = true
+    )
+    return copy(
+        markerMathActivity = MarkerMathActivity.Geometry3D,
+        marker3dPreviewTool = null,
+        marker3dSolids = marker3dSolids.map { it.copy(selected = false) } + solid,
+        marker3dSelectedSolidId = solid.id,
+        userMessage = UiMessage("${solid.label} placed.")
+    )
+}
+
+private fun ArViewerUiState.updateSelectedMarker3dSolid(
+    ignoreLock: Boolean = false,
+    transform: (Marker3dSolidState) -> Marker3dSolidState
+): ArViewerUiState {
+    val selected = marker3dSolids.firstOrNull { it.selected } ?: marker3dSolids.firstOrNull { it.id == marker3dSelectedSolidId }
+        ?: return copy(userMessage = UiMessage("Select a 3D solid first."))
+    if (selected.locked && !ignoreLock) return copy(userMessage = UiMessage("${selected.label} is locked."))
+    val next = transform(selected)
+    return copy(
+        marker3dSolids = marker3dSolids.map { if (it.id == selected.id) next.copy(selected = true) else it.copy(selected = false) },
+        marker3dSelectedSolidId = next.id
+    )
+}
+
+private fun normalizeMarkerAngle(value: Float): Float {
+    val mod = value % 360f
+    return if (mod < 0f) mod + 360f else mod
+}
+
+private const val MARKER_COORDINATE_UNIT = 0.04f
+
+private fun MarkerCoordinateTool.label(): String = when (this) {
+    MarkerCoordinateTool.PlotPoint -> "Plot point"
+    MarkerCoordinateTool.PlotMultiplePoints -> "Plot multiple points"
+    MarkerCoordinateTool.JoinPoints -> "Join points"
+    MarkerCoordinateTool.LineThroughTwoPoints -> "Line through two points"
+    MarkerCoordinateTool.Midpoint -> "Midpoint"
+    MarkerCoordinateTool.Distance -> "Distance"
+    MarkerCoordinateTool.Slope -> "Slope"
+    MarkerCoordinateTool.SectionFormula -> "Section formula"
+    MarkerCoordinateTool.EquationOfLine -> "Equation of line"
+    MarkerCoordinateTool.ParallelLine -> "Parallel line"
+    MarkerCoordinateTool.PerpendicularLine -> "Perpendicular line"
+    MarkerCoordinateTool.TriangleFromCoordinates -> "Triangle"
+    MarkerCoordinateTool.PolygonFromCoordinates -> "Polygon"
+    MarkerCoordinateTool.Reflection -> "Reflection"
+    MarkerCoordinateTool.Translation -> "Translation"
+    MarkerCoordinateTool.Rotation -> "Rotation"
+    MarkerCoordinateTool.Dilation -> "Dilation"
+}
+
+private fun ArViewerUiState.markerCoordinatePoint(x: Float, y: Float): MarkerCoordinatePointState {
+    val nextIndex = markerCoordinatePoints.size + 1
+    return MarkerCoordinatePointState(
+        id = "coord-point-${System.currentTimeMillis()}-$nextIndex",
+        label = nextCoordinateLabel(nextIndex),
+        x = x.snapIf(markerCoordinateSnapToInteger),
+        y = y.snapIf(markerCoordinateSnapToInteger),
+        selected = true
+    )
+}
+
+private fun ArViewerUiState.nearestMarkerCoordinatePoint(x: Float, y: Float): MarkerCoordinatePointState? =
+    markerCoordinatePoints.minByOrNull { point ->
+        val dx = point.x - x
+        val dy = point.y - y
+        dx * dx + dy * dy
+    }?.takeIf { point ->
+        val dx = point.x - x
+        val dy = point.y - y
+        dx * dx + dy * dy < 0.55f
+    }
+
+private fun ArViewerUiState.toggleMarkerCoordinatePoint(id: String): ArViewerUiState {
+    val nextSelection = (markerCoordinateSelectedPointIds + id).distinct().takeLast(4)
+    return copy(
+        markerCoordinatePoints = markerCoordinatePoints.map { it.copy(selected = it.id in nextSelection) },
+        markerCoordinateSelectedPointIds = nextSelection,
+        userMessage = UiMessage("${markerCoordinatePoints.firstOrNull { it.id == id }?.label ?: "Point"} selected.")
+    ).applyMarkerCoordinateTool()
+}
+
+private fun ArViewerUiState.applyMarkerCoordinateTool(): ArViewerUiState {
+    val selected = markerCoordinateSelectedPointIds.mapNotNull { id -> markerCoordinatePoints.firstOrNull { it.id == id } }
+    val shapeKind = when (markerCoordinateTool) {
+        MarkerCoordinateTool.JoinPoints -> MarkerCoordinateShapeKind.Segment
+        MarkerCoordinateTool.LineThroughTwoPoints,
+        MarkerCoordinateTool.EquationOfLine -> MarkerCoordinateShapeKind.Line
+        MarkerCoordinateTool.ParallelLine -> MarkerCoordinateShapeKind.Parallel
+        MarkerCoordinateTool.PerpendicularLine -> MarkerCoordinateShapeKind.Perpendicular
+        MarkerCoordinateTool.TriangleFromCoordinates -> MarkerCoordinateShapeKind.Triangle
+        MarkerCoordinateTool.PolygonFromCoordinates -> MarkerCoordinateShapeKind.Polygon
+        else -> null
+    }
+    if (markerCoordinateTool == MarkerCoordinateTool.Midpoint && selected.size >= 2) {
+        val a = selected[selected.size - 2]
+        val b = selected.last()
+        val point = markerCoordinatePoint((a.x + b.x) / 2f, (a.y + b.y) / 2f).copy(label = "M")
+        return copy(
+            markerCoordinatePoints = markerCoordinatePoints.map { it.copy(selected = false) } + point,
+            markerCoordinateSelectedPointIds = listOf(point.id),
+            userMessage = UiMessage("Midpoint M = (${point.x.shortCoord()}, ${point.y.shortCoord()})")
+        )
+    }
+    val required = when (shapeKind) {
+        MarkerCoordinateShapeKind.Triangle -> 3
+        MarkerCoordinateShapeKind.Polygon -> 3
+        null -> return this
+        else -> 2
+    }
+    if (selected.size < required) return this
+    val ids = selected.takeLast(if (shapeKind == MarkerCoordinateShapeKind.Polygon) selected.size else required).map { it.id }
+    val shape = MarkerCoordinateShapeState(
+        id = "coord-shape-${System.currentTimeMillis()}-${markerCoordinateShapes.size}",
+        label = "${shapeKind.name.lowercase().replaceFirstChar { it.uppercase() }} ${markerCoordinateShapes.size + 1}",
+        kind = shapeKind,
+        pointIds = ids
+    )
+    return copy(
+        markerCoordinateShapes = markerCoordinateShapes + shape,
+        markerCoordinateSelectedShapeId = shape.id,
+        userMessage = UiMessage("${shape.label} created.")
+    )
+}
+
+private fun nextCoordinateLabel(index: Int): String {
+    val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    return if (index <= alphabet.length) alphabet[index - 1].toString() else "P$index"
+}
+
+private fun Float.snapIf(enabled: Boolean): Float = if (enabled) kotlin.math.round(this) else this
+
+private fun Float.shortCoord(): String =
+    when {
+        !isFinite() -> "--"
+        kotlin.math.abs(this) >= 100 -> "%.0f".format(this)
+        kotlin.math.abs(this) >= 10 -> "%.1f".format(this)
+        else -> "%.2f".format(this)
+    }.trimEnd('0').trimEnd('.')
+
+private fun Marker2dShapeTool.fixedPointCount(): Int? = when (this) {
+    Marker2dShapeTool.Point -> 1
+    Marker2dShapeTool.Line,
+    Marker2dShapeTool.Segment,
+    Marker2dShapeTool.Ray,
+    Marker2dShapeTool.Square,
+    Marker2dShapeTool.Rectangle,
+    Marker2dShapeTool.Circle,
+    Marker2dShapeTool.Ellipse,
+    Marker2dShapeTool.RegularPolygon,
+    Marker2dShapeTool.Perpendicular,
+    Marker2dShapeTool.Parallel -> 2
+    Marker2dShapeTool.Triangle,
+    Marker2dShapeTool.Angle,
+    Marker2dShapeTool.Arc -> 3
+    Marker2dShapeTool.Polygon -> null
+    Marker2dShapeTool.Clear -> 0
+}
+
+private fun Marker2dShapeTool.requiredPointPrompt(): String = when (this) {
+    Marker2dShapeTool.Point -> "1 point"
+    Marker2dShapeTool.Polygon -> "points, then Finish"
+    else -> "${fixedPointCount()} points"
+}
+
+private fun Marker2dConstraintTool.label(): String = when (this) {
+    Marker2dConstraintTool.EqualLengths -> "Equal lengths"
+    Marker2dConstraintTool.EqualAngles -> "Equal angles"
+    Marker2dConstraintTool.Parallel -> "Parallel"
+    Marker2dConstraintTool.Perpendicular -> "Perpendicular"
+    Marker2dConstraintTool.Horizontal -> "Horizontal"
+    Marker2dConstraintTool.Vertical -> "Vertical"
+    Marker2dConstraintTool.FixedRadius -> "Fixed radius"
+    Marker2dConstraintTool.FixedLength -> "Fixed length"
+    Marker2dConstraintTool.PointOnLine -> "Point on line"
+    Marker2dConstraintTool.PointOnCircle -> "Point on circle"
+    Marker2dConstraintTool.Midpoint -> "Midpoint"
+    Marker2dConstraintTool.Tangency -> "Tangency"
+}
+
+private fun ArViewerUiState.selectedMarker2dObject(): ConstructionObject? =
+    constructionGeometry.objects.firstOrNull { it.id == marker2dSelectedObjectId }
+        ?: constructionGeometry.objects.firstOrNull { it.id == constructionGeometry.selectedObjectId }
+
+private fun ArViewerUiState.selectNearestMarker2dObject(x: Float, y: Float): ArViewerUiState {
+    val nearest = resolvedConstructions
+        .filter { it.visible && it.points.isNotEmpty() }
+        .minByOrNull { construction ->
+            construction.points.minOf { point ->
+                val dx = point.x - x
+                val dz = point.z - y
+                dx * dx + dz * dz
+            }
+        } ?: return copy(userMessage = UiMessage("Choose a tool, then tap G01."))
+    return copy(
+        marker2dSelectedObjectId = nearest.id,
+        constructionGeometry = constructionGeometry.copy(selectedObjectId = nearest.id),
+        userMessage = UiMessage("${nearest.label} selected.")
+    )
+}
+
+private fun ArViewerUiState.snapMarker2dPoint(point: Marker2dPointState): Marker2dPointState {
+    if (marker2dSnapToPoints) {
+        val nearest = constructionGeometry.points.minByOrNull {
+            val dx = it.position.x - point.x
+            val dz = it.position.z - point.y
+            dx * dx + dz * dz
+        }
+        if (nearest != null) {
+            val dx = nearest.position.x - point.x
+            val dz = nearest.position.z - point.y
+            if (dx * dx + dz * dz < 0.0016) {
+                return Marker2dPointState(nearest.position.x.toFloat(), nearest.position.z.toFloat())
+            }
+        }
+    }
+    if (!marker2dSnapToGrid) return point
+    val step = 0.04f
+    return Marker2dPointState(
+        x = kotlin.math.round(point.x / step) * step,
+        y = kotlin.math.round(point.y / step) * step
+    )
+}
+
+private fun ConstructionGeometryState.addMarkerShape(tool: Marker2dShapeTool, draft: List<Marker2dPointState>): ConstructionGeometryState {
+    val points = tool.toConstructionPoints(draft)
+    val kind = when (tool) {
+        Marker2dShapeTool.Point -> ConstructionObjectKind.Point
+        Marker2dShapeTool.Line -> ConstructionObjectKind.Line
+        Marker2dShapeTool.Segment -> ConstructionObjectKind.Segment
+        Marker2dShapeTool.Ray -> ConstructionObjectKind.Ray
+        Marker2dShapeTool.Circle,
+        Marker2dShapeTool.Ellipse,
+        Marker2dShapeTool.Arc -> ConstructionObjectKind.Circle
+        Marker2dShapeTool.Perpendicular -> ConstructionObjectKind.Perpendicular
+        Marker2dShapeTool.Parallel -> ConstructionObjectKind.Parallel
+        else -> ConstructionObjectKind.Polygon
+    }
+    val dependency = when (kind) {
+        ConstructionObjectKind.Circle -> ConstructionDependencyKind.CircleCenterPoint
+        ConstructionObjectKind.Parallel,
+        ConstructionObjectKind.Perpendicular -> ConstructionDependencyKind.ThroughTwoPoints
+        ConstructionObjectKind.Line,
+        ConstructionObjectKind.Segment,
+        ConstructionObjectKind.Ray -> ConstructionDependencyKind.ThroughTwoPoints
+        ConstructionObjectKind.Point -> ConstructionDependencyKind.Free
+        else -> ConstructionDependencyKind.PolygonThroughPoints
+    }
+    return addMarkerPolygonObject(tool.label, kind, dependency, points)
+}
+
+private fun Marker2dShapeTool.toConstructionPoints(draft: List<Marker2dPointState>): List<Vector3Value> {
+    fun p(point: Marker2dPointState) = Vector3Value(point.x.toDouble(), 0.0, point.y.toDouble())
+    val first = draft.firstOrNull() ?: Marker2dPointState(0f, 0f)
+    val second = draft.getOrNull(1) ?: Marker2dPointState(first.x + 0.16f, first.y)
+    return when (this) {
+        Marker2dShapeTool.Point -> listOf(p(first))
+        Marker2dShapeTool.Line,
+        Marker2dShapeTool.Segment,
+        Marker2dShapeTool.Ray,
+        Marker2dShapeTool.Circle,
+        Marker2dShapeTool.Ellipse,
+        Marker2dShapeTool.Perpendicular,
+        Marker2dShapeTool.Parallel -> listOf(p(first), p(second))
+        Marker2dShapeTool.Triangle,
+        Marker2dShapeTool.Angle,
+        Marker2dShapeTool.Arc -> draft.take(3).map(::p)
+        Marker2dShapeTool.Square -> squareFromCorners(first, second).map(::p)
+        Marker2dShapeTool.Rectangle -> rectangleFromCorners(first, second).map(::p)
+        Marker2dShapeTool.RegularPolygon -> regularPolygon(first, second, 6).map(::p)
+        Marker2dShapeTool.Polygon -> draft.map(::p)
+        Marker2dShapeTool.Clear -> emptyList()
+    }
+}
+
+private fun rectangleFromCorners(a: Marker2dPointState, b: Marker2dPointState): List<Marker2dPointState> =
+    listOf(a, Marker2dPointState(b.x, a.y), b, Marker2dPointState(a.x, b.y))
+
+private fun squareFromCorners(a: Marker2dPointState, b: Marker2dPointState): List<Marker2dPointState> {
+    val side = maxOf(kotlin.math.abs(b.x - a.x), kotlin.math.abs(b.y - a.y)).coerceAtLeast(0.04f)
+    val sx = if (b.x >= a.x) side else -side
+    val sy = if (b.y >= a.y) side else -side
+    return listOf(a, Marker2dPointState(a.x + sx, a.y), Marker2dPointState(a.x + sx, a.y + sy), Marker2dPointState(a.x, a.y + sy))
+}
+
+private fun regularPolygon(center: Marker2dPointState, edge: Marker2dPointState, sides: Int): List<Marker2dPointState> {
+    val radius = kotlin.math.hypot((edge.x - center.x).toDouble(), (edge.y - center.y).toDouble()).coerceAtLeast(0.04).toFloat()
+    val start = kotlin.math.atan2((edge.y - center.y).toDouble(), (edge.x - center.x).toDouble()).toFloat()
+    return (0 until sides).map { index ->
+        val angle = start + index * (2f * Math.PI.toFloat() / sides)
+        Marker2dPointState(center.x + kotlin.math.cos(angle) * radius, center.y + kotlin.math.sin(angle) * radius)
+    }
+}
+
+private fun List<ConstructionPoint>.centroid(): Vector3Value {
+    if (isEmpty()) return Vector3Value(0.0, 0.0, 0.0)
+    return Vector3Value(
+        sumOf { it.position.x } / size,
+        sumOf { it.position.y } / size,
+        sumOf { it.position.z } / size
+    )
+}
+
+private fun Int.floorMod(mod: Int): Int = ((this % mod) + mod) % mod
+
 private fun MarkerMathActivity.label(): String = when (this) {
     MarkerMathActivity.Geometry2D -> "2D Geometry"
     MarkerMathActivity.Geometry3D -> "3D Shapes"
@@ -2093,6 +3096,41 @@ private fun MarkerTransformationTool.label(): String = when (this) {
     MarkerTransformationTool.VerticalStretch -> "Vertical stretch"
     MarkerTransformationTool.Shear -> "Shear"
     MarkerTransformationTool.Composite -> "Composite"
+}
+
+private fun MarkerTransformShape.label(): String = when (this) {
+    MarkerTransformShape.Point -> "Point"
+    MarkerTransformShape.Segment -> "Line segment"
+    MarkerTransformShape.Triangle -> "Triangle"
+    MarkerTransformShape.Square -> "Square"
+    MarkerTransformShape.Rectangle -> "Rectangle"
+    MarkerTransformShape.Polygon -> "Polygon"
+    MarkerTransformShape.Circle -> "Circle"
+}
+
+private fun MarkerTransformSequenceAction.label(): String = when (this) {
+    MarkerTransformSequenceAction.Rotate90 -> "Rotate 90 deg"
+    MarkerTransformSequenceAction.Translate32 -> "Translate (3, 2)"
+    MarkerTransformSequenceAction.ReflectYAxis -> "Reflect Y-axis"
+}
+
+private fun Marker2dShapeTool.toTransformShape(): MarkerTransformShape = when (this) {
+    Marker2dShapeTool.Point -> MarkerTransformShape.Point
+    Marker2dShapeTool.Line,
+    Marker2dShapeTool.Segment,
+    Marker2dShapeTool.Ray,
+    Marker2dShapeTool.Perpendicular,
+    Marker2dShapeTool.Parallel -> MarkerTransformShape.Segment
+    Marker2dShapeTool.Triangle,
+    Marker2dShapeTool.Angle -> MarkerTransformShape.Triangle
+    Marker2dShapeTool.Square -> MarkerTransformShape.Square
+    Marker2dShapeTool.Rectangle -> MarkerTransformShape.Rectangle
+    Marker2dShapeTool.Circle,
+    Marker2dShapeTool.Ellipse,
+    Marker2dShapeTool.Arc -> MarkerTransformShape.Circle
+    Marker2dShapeTool.Polygon,
+    Marker2dShapeTool.RegularPolygon -> MarkerTransformShape.Polygon
+    Marker2dShapeTool.Clear -> MarkerTransformShape.Triangle
 }
 
 private fun ArGraphDomain.zoomed(factor: Double): ArGraphDomain {

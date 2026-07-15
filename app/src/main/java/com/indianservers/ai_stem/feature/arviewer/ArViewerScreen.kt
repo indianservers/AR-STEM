@@ -100,6 +100,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -216,6 +217,24 @@ private const val MARKER_STATUS_UPDATE_FRAME_INTERVAL = 15
 private const val MIN_STABLE_PLANE_FRAMES = 8
 private const val MIN_PLANE_EXTENT_METERS = 0.18f
 
+data class RadiantPointStyle(
+    val centreRadius: Float = 0.011f,
+    val haloRadius: Float = 0.026f,
+    val glowIntensity: Float = 1f,
+    val isSelected: Boolean = false,
+    val isDraggable: Boolean = false,
+    val isLocked: Boolean = false,
+    val isInvalid: Boolean = false
+)
+
+data class ThickLineStyle(
+    val widthDp: Float = 5f,
+    val glowWidthDp: Float = 9f,
+    val opacity: Float = 1f,
+    val isDashed: Boolean = false,
+    val isSelected: Boolean = false
+)
+
 private fun NativeArSensorSample.compactLog(): String =
     "acc=${"%.2f".format(linearAccelerationMagnitude)} gyro=${"%.2f".format(gyroscopeMagnitude)} pitch=${pitchDegrees?.let { "%.0f".format(it) }} roll=${rollDegrees?.let { "%.0f".format(it) }} lux=${ambientLightLux?.let { "%.0f".format(it) }}"
 
@@ -252,8 +271,15 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
     }
     LaunchedEffect(state.userMessage) {
         state.userMessage?.let {
-            snackbarHostState.showSnackbar(it.text)
+            if (!state.isQuietMarkerMode()) {
+                snackbarHostState.showSnackbar(it.text)
+            }
             viewModel.clearMessage()
+        }
+    }
+    LaunchedEffect(state.arEngineMode, state.markerMathActivity) {
+        if (state.isQuietMarkerMode()) {
+            snackbarHostState.currentSnackbarData?.dismiss()
         }
     }
     DisposableEffect(Unit) {
@@ -333,161 +359,32 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
                             onPaperGraphCalibrationTap = viewModel::onPaperGraphCalibrationTap,
                             onPointLabelTap = viewModel::addPointLabelAt,
                             onRulerAnchorTap = viewModel::addRulerAnchorAt,
+                            onMarker2dWorkspaceTap = viewModel::onMarker2dWorkspaceTap,
+                            onMarker3dWorkspaceTap = viewModel::onMarker3dWorkspaceTap,
+                            onMarkerCoordinateWorkspaceTap = viewModel::onMarkerCoordinateWorkspaceTap,
                             onPlacementPoint = viewModel::recordPlacementPoint,
                             onOutdoorGeospatialFrame = viewModel::onOutdoorGeospatialFrame,
                             onPlacementMissed = viewModel::onPlacementMissed,
                             onRuntimeError = viewModel::onRuntimeError
                         )
                     }
-                    ArChrome(
+                    SupportedArChrome(
                         state = state,
+                        viewModel = viewModel,
                         onBack = onBack,
                         onHelp = { showHelp = true },
-                        onSelectObject = viewModel::selectObject,
-                        onSelectArEngineMode = { mode ->
-                            if (mode == ArEngineMode.OutdoorGeospatialMath && state.locationPermission != LocationPermissionState.Granted) {
-                                askedLocationPermission = true
-                                locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                            } else {
-                                viewModel.selectArEngineMode(mode)
-                            }
+                        onRequireLocation = {
+                            askedLocationPermission = true
+                            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
                         },
-                        onSelectMathExperience = { experience ->
-                            if (experience == MathArExperience.OutdoorGeometry && state.locationPermission != LocationPermissionState.Granted) {
-                                askedLocationPermission = true
-                                locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                            } else {
-                                viewModel.selectMathArExperience(experience)
-                            }
-                        },
-                        onFloatingTool = viewModel::selectFloatingTool,
-                        onGraphColorMap = viewModel::setGraphColorMap,
-                        onFunction3dTransform = viewModel::setFunction3dTransformMode,
-                        onAnimationProgress = viewModel::setGraphAnimationProgress,
-                        onAnimationMode = viewModel::setGraphAnimationMode,
-                        onSlicePosition = viewModel::setGraphSlicePosition,
-                        onCalibrationStep = viewModel::advancePaperGraphCalibration,
-                        onPaperGraphLayer = viewModel::togglePaperGraphLayer,
-                        onFeaturePhase = viewModel::selectFeaturePhase,
-                        onToggleMathArFeature = viewModel::toggleMathArFeature,
-                        onLiveEquation = viewModel::updateLiveEquation,
-                        onGraphSlider = viewModel::updateArGraphSlider,
-                        onGraphQuality = viewModel::setArGraphQualityPreset,
-                        onGraphDomain = viewModel::updateArGraphDomain,
-                        onComparisonEquation = viewModel::updateComparisonEquation,
-                        onAnalysisFocus = viewModel::setArGraphAnalysisFocus,
-                        onAdvancedMathTool = viewModel::applyAdvancedMathTool,
-                        onAddPointLabel = viewModel::addGeneratedPointLabel,
-                        onAddRulerAnchor = viewModel::addRulerAnchor,
-                        onCompareOffset = viewModel::setCompareOffset,
-                        onGestureHandle = viewModel::selectGestureHandle,
-                        onTransformStep = viewModel::setTransformHandleStep,
-                        onApplyGestureHandle = viewModel::applySelectedGestureHandle,
-                        onAddConstructionPoint = viewModel::addConstructionPointFromSelection,
-                        onConstructionLine = viewModel::createConstructionLine,
-                        onConstructionSegment = viewModel::createConstructionSegment,
-                        onConstructionVector = viewModel::createConstructionVector,
-                        onConstructionPlane = viewModel::createConstructionPlane,
-                        onConstructionCircle = viewModel::createConstructionCircle,
-                        onConstructionPolygon = viewModel::createConstructionPolygon,
-                        onConstructionMidpoint = viewModel::createConstructionMidpoint,
-                        onConstructionParallel = viewModel::createConstructionParallel,
-                        onConstructionPerpendicular = viewModel::createConstructionPerpendicular,
-                        onConstructionConstraint = viewModel::addConstructionConstraint,
-                        onCapturePersistentAnchor = viewModel::capturePersistentAnchor,
-                        onDepthOcclusionMode = viewModel::setDepthOcclusionMode,
-                        onPerformanceProfile = viewModel::setPerformanceProfile,
-                        onMeshDensity = viewModel::setMeshDensity,
-                        onMaxSceneObjects = viewModel::setMaxSceneObjects,
-                        onMarkScreenshotReady = viewModel::markScreenshotReady,
-                        onExportArScene = viewModel::exportArScenePackage,
-                        onApplyArTemplate = viewModel::applyArSceneTemplate,
-                        onSelectArWorkflow = viewModel::selectArWorkflow,
-                        onCompleteWorkflowStep = viewModel::completeWorkflowStep,
-                        onAdvanceWorkflowStep = viewModel::advanceWorkflowStep,
-                        onRefreshWorkflow = viewModel::refreshWorkflowEvaluation,
-                        onExportArActivity = viewModel::exportArActivityPackage,
-                        onCapture = viewModel::acknowledgeCapture,
-                        onReplace = {
+                        onDetachAnchor = {
                             anchor?.detach()
                             anchor = null
-                            viewModel.deleteObject()
                         },
-                        onMove = {
-                            moving = true
-                            snackbarHostState.currentSnackbarData?.dismiss()
-                        },
-                        onRePlace = {
-                            anchor?.detach()
-                            anchor = null
-                            moving = true
-                            viewModel.requestRePlacement()
-                            snackbarHostState.currentSnackbarData?.dismiss()
-                        },
-                        onReset = {
-                            viewModel.resetTransform()
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        },
-                        onDelete = {
-                            anchor?.detach()
-                            anchor = null
-                            viewModel.deleteObject()
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        },
-                        onTogglePlanes = viewModel::togglePlanes,
-                        onSelectSceneObject = viewModel::selectSceneObject,
-                        onExperienceMode = viewModel::setExperienceMode,
-                        onMode = viewModel::setSceneInteractionMode,
-                        onDuplicate = viewModel::duplicateSelected,
-                        onLock = viewModel::toggleLockSelected,
-                        onHide = viewModel::toggleHideSelected,
-                        onGroup = viewModel::groupSelected,
-                        onUngroup = viewModel::ungroupSelected,
-                        onUndo = viewModel::undo,
-                        onRedo = viewModel::redo,
-                        onInspector = viewModel::toggleInspector,
-                        onDiagnostics = viewModel::toggleDiagnostics,
-                        onLayers = viewModel::toggleLayers,
-                        onSavedScenes = viewModel::toggleSavedScenes,
-                        onSave = { viewModel.saveScene(saveName) },
-                        onClearScene = {
-                            anchor?.detach()
-                            anchor = null
-                            viewModel.clearScene()
-                        },
-                        onMarkerZoom = viewModel::zoomMarkerLesson,
-                        onMarkerRotate = viewModel::rotateMarkerLesson,
-                        onMarkerExpand = viewModel::toggleMarkerLessonExpanded,
-                        onMarkerNext = viewModel::focusNextMarkerLessonElement,
-                        onMarkerReset = viewModel::resetMarkerLessonInteraction,
-                        onMarkerActivity = viewModel::selectMarkerMathActivity,
-                        onMarker2dShape = viewModel::addMarker2dShape,
-                        onMarker3dObject = viewModel::addMarker3dObject,
-                        onMarkerTransformationTool = viewModel::selectMarkerTransformationTool,
-                        onMarkerTransformProgress = viewModel::setMarkerTransformProgress,
-                        onMarkerTranslationX = viewModel::setMarkerTranslationX,
-                        onMarkerTranslationY = viewModel::setMarkerTranslationY,
-                        onMarkerRotationDegrees = viewModel::setMarkerRotationDegrees,
-                        onMarkerRotationDirection = viewModel::toggleMarkerRotationDirection,
-                        onMarkerReflectionLine = viewModel::setMarkerReflectionLine,
-                        onMarkerDilationScale = viewModel::setMarkerDilationScale,
-                        onMarkerHorizontalStretch = viewModel::setMarkerHorizontalStretch,
-                        onMarkerVerticalStretch = viewModel::setMarkerVerticalStretch,
-                        onMarkerShear = viewModel::setMarkerShear,
-                        onUndoMarkerTransformation = viewModel::undoMarkerTransformation,
-                        onMarkerTrigAngle = viewModel::setMarkerTrigAngle,
-                        onAddMarkerGraphFunction = viewModel::addMarkerGraphFunction,
-                        onSelectMarkerGraphFunction = viewModel::selectMarkerGraphFunction,
-                        onToggleSelectedMarkerGraphVisibility = viewModel::toggleSelectedMarkerGraphVisibility,
-                        onDeleteSelectedMarkerGraphFunction = viewModel::deleteSelectedMarkerGraphFunction,
-                        onDuplicateSelectedMarkerGraphFunction = viewModel::duplicateSelectedMarkerGraphFunction,
-                        onMarkerGraphParameter = viewModel::updateSelectedMarkerGraphParameter,
-                        onMarkerGraphTrace = viewModel::toggleMarkerGraphTrace,
-                        onMarkerGraphTraceProgress = viewModel::setMarkerGraphTraceProgress,
-                        onMarkerGraphZoom = viewModel::zoomMarkerGraph,
-                        onMarkerGraphPan = viewModel::panMarkerGraph,
-                        onMarkerGraphFit = viewModel::fitMarkerGraphView,
-                        onClearMarkerWorkspace = viewModel::clearMarkerWorkspace
+                        onMoving = { moving = it },
+                        saveName = saveName,
+                        haptic = haptic,
+                        snackbarHostState = snackbarHostState
                     )
                     AnimatedVisibility(visible = moving, modifier = Modifier.align(Alignment.Center)) {
                         Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.tertiaryContainer) {
@@ -548,6 +445,341 @@ fun ArViewerScreen(onBack: () -> Unit, viewModel: ArViewerViewModel = viewModel(
 }
 
 @Composable
+private fun SupportedArChrome(
+    state: ArViewerUiState,
+    viewModel: ArViewerViewModel,
+    onBack: () -> Unit,
+    onHelp: () -> Unit,
+    onRequireLocation: () -> Unit,
+    onDetachAnchor: () -> Unit,
+    onMoving: (Boolean) -> Unit,
+    saveName: String,
+    haptic: HapticFeedback,
+    snackbarHostState: SnackbarHostState
+) {
+    SupportedQuietMarkerChrome(
+        state = state,
+        viewModel = viewModel,
+        onBack = onBack,
+        onHelp = onHelp,
+        haptic = haptic
+    )
+    return
+    ArChrome(
+        state = state,
+        onBack = onBack,
+        onHelp = onHelp,
+        onSelectObject = viewModel::selectObject,
+        onSelectArEngineMode = { mode ->
+            if (mode == ArEngineMode.OutdoorGeospatialMath && state.locationPermission != LocationPermissionState.Granted) {
+                onRequireLocation()
+            } else {
+                viewModel.selectArEngineMode(mode)
+            }
+        },
+        onSelectMathExperience = { experience ->
+            if (experience == MathArExperience.OutdoorGeometry && state.locationPermission != LocationPermissionState.Granted) {
+                onRequireLocation()
+            } else {
+                viewModel.selectMathArExperience(experience)
+            }
+        },
+        onFloatingTool = viewModel::selectFloatingTool,
+        onGraphColorMap = viewModel::setGraphColorMap,
+        onFunction3dTransform = viewModel::setFunction3dTransformMode,
+        onAnimationProgress = viewModel::setGraphAnimationProgress,
+        onAnimationMode = viewModel::setGraphAnimationMode,
+        onSlicePosition = viewModel::setGraphSlicePosition,
+        onCalibrationStep = viewModel::advancePaperGraphCalibration,
+        onPaperGraphLayer = viewModel::togglePaperGraphLayer,
+        onFeaturePhase = viewModel::selectFeaturePhase,
+        onToggleMathArFeature = viewModel::toggleMathArFeature,
+        onLiveEquation = viewModel::updateLiveEquation,
+        onGraphSlider = viewModel::updateArGraphSlider,
+        onGraphQuality = viewModel::setArGraphQualityPreset,
+        onGraphDomain = viewModel::updateArGraphDomain,
+        onComparisonEquation = viewModel::updateComparisonEquation,
+        onAnalysisFocus = viewModel::setArGraphAnalysisFocus,
+        onAdvancedMathTool = viewModel::applyAdvancedMathTool,
+        onAddPointLabel = viewModel::addGeneratedPointLabel,
+        onAddRulerAnchor = viewModel::addRulerAnchor,
+        onCompareOffset = viewModel::setCompareOffset,
+        onGestureHandle = viewModel::selectGestureHandle,
+        onTransformStep = viewModel::setTransformHandleStep,
+        onApplyGestureHandle = viewModel::applySelectedGestureHandle,
+        onAddConstructionPoint = viewModel::addConstructionPointFromSelection,
+        onConstructionLine = viewModel::createConstructionLine,
+        onConstructionSegment = viewModel::createConstructionSegment,
+        onConstructionVector = viewModel::createConstructionVector,
+        onConstructionPlane = viewModel::createConstructionPlane,
+        onConstructionCircle = viewModel::createConstructionCircle,
+        onConstructionPolygon = viewModel::createConstructionPolygon,
+        onConstructionMidpoint = viewModel::createConstructionMidpoint,
+        onConstructionParallel = viewModel::createConstructionParallel,
+        onConstructionPerpendicular = viewModel::createConstructionPerpendicular,
+        onConstructionConstraint = viewModel::addConstructionConstraint,
+        onCapturePersistentAnchor = viewModel::capturePersistentAnchor,
+        onDepthOcclusionMode = viewModel::setDepthOcclusionMode,
+        onPerformanceProfile = viewModel::setPerformanceProfile,
+        onMeshDensity = viewModel::setMeshDensity,
+        onMaxSceneObjects = viewModel::setMaxSceneObjects,
+        onMarkScreenshotReady = viewModel::markScreenshotReady,
+        onExportArScene = viewModel::exportArScenePackage,
+        onApplyArTemplate = viewModel::applyArSceneTemplate,
+        onSelectArWorkflow = viewModel::selectArWorkflow,
+        onCompleteWorkflowStep = viewModel::completeWorkflowStep,
+        onAdvanceWorkflowStep = viewModel::advanceWorkflowStep,
+        onRefreshWorkflow = viewModel::refreshWorkflowEvaluation,
+        onExportArActivity = viewModel::exportArActivityPackage,
+        onCapture = viewModel::acknowledgeCapture,
+        onReplace = {
+            onDetachAnchor()
+            viewModel.deleteObject()
+        },
+        onMove = {
+            onMoving(true)
+            snackbarHostState.currentSnackbarData?.dismiss()
+        },
+        onRePlace = {
+            onDetachAnchor()
+            onMoving(true)
+            viewModel.requestRePlacement()
+            snackbarHostState.currentSnackbarData?.dismiss()
+        },
+        onReset = {
+            viewModel.resetTransform()
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        },
+        onDelete = {
+            onDetachAnchor()
+            viewModel.deleteObject()
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        },
+        onTogglePlanes = viewModel::togglePlanes,
+        onSelectSceneObject = viewModel::selectSceneObject,
+        onExperienceMode = viewModel::setExperienceMode,
+        onMode = viewModel::setSceneInteractionMode,
+        onDuplicate = viewModel::duplicateSelected,
+        onLock = viewModel::toggleLockSelected,
+        onHide = viewModel::toggleHideSelected,
+        onGroup = viewModel::groupSelected,
+        onUngroup = viewModel::ungroupSelected,
+        onUndo = viewModel::undo,
+        onRedo = viewModel::redo,
+        onInspector = viewModel::toggleInspector,
+        onDiagnostics = viewModel::toggleDiagnostics,
+        onLayers = viewModel::toggleLayers,
+        onSavedScenes = viewModel::toggleSavedScenes,
+        onSave = { viewModel.saveScene(saveName) },
+        onClearScene = {
+            onDetachAnchor()
+            viewModel.clearScene()
+        },
+        onMarkerZoom = viewModel::zoomMarkerLesson,
+        onMarkerRotate = viewModel::rotateMarkerLesson,
+        onMarkerExpand = viewModel::toggleMarkerLessonExpanded,
+        onMarkerNext = viewModel::focusNextMarkerLessonElement,
+        onMarkerReset = viewModel::resetMarkerLessonInteraction,
+        onMarkerActivity = viewModel::selectMarkerMathActivity,
+        onMarker2dShape = viewModel::addMarker2dShape,
+        onMarker2dFinishDraft = viewModel::finishMarker2dDraft,
+        onMarker2dCancelDraft = viewModel::cancelMarker2dDraft,
+        onMarker2dSelectNext = viewModel::selectNextMarker2dObject,
+        onMarker2dMove = viewModel::moveSelectedMarker2dObject,
+        onMarker2dRotate = viewModel::rotateSelectedMarker2dObject,
+        onMarker2dScale = viewModel::scaleSelectedMarker2dObject,
+        onMarker2dDuplicate = viewModel::duplicateSelectedMarker2dObject,
+        onMarker2dHide = viewModel::hideSelectedMarker2dObject,
+        onMarker2dDelete = viewModel::deleteSelectedMarker2dObject,
+        onMarker2dToggleDisplay = viewModel::toggleMarker2dDisplay,
+        onMarker2dConstraint = viewModel::selectMarker2dConstraint,
+        onMarker3dObject = viewModel::addMarker3dObject,
+        onMarker3dPlacePreview = viewModel::placeMarker3dPreview,
+        onMarker3dCancelPreview = viewModel::cancelMarker3dPreview,
+        onMarker3dMovePreview = viewModel::moveMarker3dPreview,
+        onMarker3dSelectNext = viewModel::selectNextMarker3dSolid,
+        onMarker3dMove = viewModel::moveSelectedMarker3dSolid,
+        onMarker3dRotate = viewModel::rotateSelectedMarker3dSolid,
+        onMarker3dScale = viewModel::scaleSelectedMarker3dSolid,
+        onMarker3dParameter = viewModel::updateSelectedMarker3dParameter,
+        onMarker3dDuplicate = viewModel::duplicateSelectedMarker3dSolid,
+        onMarker3dHide = viewModel::toggleSelectedMarker3dVisibility,
+        onMarker3dLock = viewModel::toggleSelectedMarker3dLock,
+        onMarker3dDelete = viewModel::deleteSelectedMarker3dSolid,
+        onMarker3dReset = viewModel::resetSelectedMarker3dSolid,
+        onMarker3dOverlay = viewModel::toggleMarker3dOverlay,
+        onMarker3dExplode = viewModel::toggleSelectedMarker3dExploded,
+        onMarker3dSection = viewModel::setSelectedMarker3dSection,
+        onMarker3dClipping = viewModel::setSelectedMarker3dClipping,
+        onMarker3dNet = viewModel::toggleSelectedMarker3dNet,
+        onMarkerCoordinateTool = viewModel::selectMarkerCoordinateTool,
+        onMarkerCoordinateAddPoint = viewModel::addMarkerCoordinatePoint,
+        onMarkerCoordinateSelectNext = viewModel::selectNextMarkerCoordinatePoint,
+        onMarkerCoordinateMovePoint = viewModel::moveSelectedMarkerCoordinatePoint,
+        onMarkerCoordinateSetPoint = viewModel::setSelectedMarkerCoordinatePoint,
+        onMarkerCoordinateApplyTool = viewModel::applyMarkerCoordinateTool,
+        onMarkerCoordinateSnap = viewModel::toggleMarkerCoordinateSnap,
+        onMarkerCoordinateFormat = viewModel::toggleMarkerCoordinateFormat,
+        onMarkerCoordinateSlopeTriangle = viewModel::toggleMarkerCoordinateSlopeTriangle,
+        onMarkerCoordinateTransform = viewModel::transformMarkerCoordinateSelection,
+        onMarkerTransformationTool = viewModel::selectMarkerTransformationTool,
+        onMarkerTransformShape = viewModel::selectMarkerTransformShape,
+        onMarkerTransformationSequenceStep = viewModel::addMarkerTransformationSequenceStep,
+        onClearMarkerTransformationSequence = viewModel::clearMarkerTransformationSequence,
+        onMarkerTransformProgress = viewModel::setMarkerTransformProgress,
+        onMarkerTranslationX = viewModel::setMarkerTranslationX,
+        onMarkerTranslationY = viewModel::setMarkerTranslationY,
+        onMarkerRotationDegrees = viewModel::setMarkerRotationDegrees,
+        onMarkerRotationCenterX = viewModel::setMarkerRotationCenterX,
+        onMarkerRotationCenterY = viewModel::setMarkerRotationCenterY,
+        onMarkerRotationDirection = viewModel::toggleMarkerRotationDirection,
+        onMarkerReflectionLine = viewModel::setMarkerReflectionLine,
+        onMarkerDilationScale = viewModel::setMarkerDilationScale,
+        onMarkerDilationCenterX = viewModel::setMarkerDilationCenterX,
+        onMarkerDilationCenterY = viewModel::setMarkerDilationCenterY,
+        onMarkerHorizontalStretch = viewModel::setMarkerHorizontalStretch,
+        onMarkerVerticalStretch = viewModel::setMarkerVerticalStretch,
+        onMarkerShear = viewModel::setMarkerShear,
+        onUndoMarkerTransformation = viewModel::undoMarkerTransformation,
+        onMarkerTrigAngle = viewModel::setMarkerTrigAngle,
+        onAddMarkerGraphFunction = viewModel::addMarkerGraphFunction,
+        onSelectMarkerGraphFunction = viewModel::selectMarkerGraphFunction,
+        onToggleSelectedMarkerGraphVisibility = viewModel::toggleSelectedMarkerGraphVisibility,
+        onDeleteSelectedMarkerGraphFunction = viewModel::deleteSelectedMarkerGraphFunction,
+        onDuplicateSelectedMarkerGraphFunction = viewModel::duplicateSelectedMarkerGraphFunction,
+        onMarkerGraphParameter = viewModel::updateSelectedMarkerGraphParameter,
+        onMarkerGraphTrace = viewModel::toggleMarkerGraphTrace,
+        onMarkerGraphTraceProgress = viewModel::setMarkerGraphTraceProgress,
+        onMarkerGraphZoom = viewModel::zoomMarkerGraph,
+        onMarkerGraphPan = viewModel::panMarkerGraph,
+        onMarkerGraphFit = viewModel::fitMarkerGraphView,
+        onMarkerGraphReset = viewModel::resetMarkerGraphView,
+        onMarkerGraphXMin = viewModel::updateMarkerGraphDomainXMin,
+        onMarkerGraphXMax = viewModel::updateMarkerGraphDomainXMax,
+        onMarkerGraphYMin = viewModel::updateMarkerGraphDomainYMin,
+        onMarkerGraphYMax = viewModel::updateMarkerGraphDomainYMax,
+        onToggleMarkerGraphGrid = viewModel::toggleMarkerGraphGrid,
+        onToggleMarkerGraphLabels = viewModel::toggleMarkerGraphLabels,
+        onToggleMarkerGraphIntercepts = viewModel::toggleMarkerGraphIntercepts,
+        onToggleMarkerGraphExtrema = viewModel::toggleMarkerGraphExtrema,
+        onToggleMarkerGraphDiscontinuities = viewModel::toggleMarkerGraphDiscontinuities,
+        onToggleMarkerGraphDerivative = viewModel::toggleMarkerGraphDerivative,
+        onToggleMarkerGraphIntegralArea = viewModel::toggleMarkerGraphIntegralArea,
+        onClearMarkerWorkspace = viewModel::clearMarkerWorkspace
+    )
+}
+
+@Composable
+private fun SupportedQuietMarkerChrome(
+    state: ArViewerUiState,
+    viewModel: ArViewerViewModel,
+    onBack: () -> Unit,
+    onHelp: () -> Unit,
+    haptic: HapticFeedback
+) {
+    QuietMarkerChrome(
+        state = state,
+        onBack = onBack,
+        onMarkerZoom = viewModel::zoomMarkerLesson,
+        onMarkerRotate = viewModel::rotateMarkerLesson,
+        onMarkerExpand = viewModel::toggleMarkerLessonExpanded,
+        onMarkerNext = viewModel::focusNextMarkerLessonElement,
+        onMarkerReset = viewModel::resetMarkerLessonInteraction,
+        onLiveEquation = viewModel::updateLiveEquation,
+        onGraphColorMap = viewModel::setGraphColorMap,
+        onFunction3dTransform = viewModel::setFunction3dTransformMode,
+        onAnimationProgress = viewModel::setGraphAnimationProgress,
+        onSlicePosition = viewModel::setGraphSlicePosition,
+        onMarkerActivity = viewModel::selectMarkerMathActivity,
+        onMarker2dShape = viewModel::addMarker2dShape,
+        onMarker2dFinishDraft = viewModel::finishMarker2dDraft,
+        onMarker2dCancelDraft = viewModel::cancelMarker2dDraft,
+        onMarker2dSelectNext = viewModel::selectNextMarker2dObject,
+        onMarker2dMove = viewModel::moveSelectedMarker2dObject,
+        onMarker2dRotate = viewModel::rotateSelectedMarker2dObject,
+        onMarker2dScale = viewModel::scaleSelectedMarker2dObject,
+        onMarker2dDuplicate = viewModel::duplicateSelectedMarker2dObject,
+        onMarker2dHide = viewModel::hideSelectedMarker2dObject,
+        onMarker2dDelete = viewModel::deleteSelectedMarker2dObject,
+        onMarker2dToggleDisplay = viewModel::toggleMarker2dDisplay,
+        onMarker2dConstraint = viewModel::selectMarker2dConstraint,
+        onMarker3dObject = viewModel::addMarker3dObject,
+        onMarker3dPlacePreview = viewModel::placeMarker3dPreview,
+        onMarker3dCancelPreview = viewModel::cancelMarker3dPreview,
+        onMarker3dMovePreview = viewModel::moveMarker3dPreview,
+        onMarker3dSelectNext = viewModel::selectNextMarker3dSolid,
+        onMarker3dMove = viewModel::moveSelectedMarker3dSolid,
+        onMarker3dRotate = viewModel::rotateSelectedMarker3dSolid,
+        onMarker3dScale = viewModel::scaleSelectedMarker3dSolid,
+        onMarker3dParameter = viewModel::updateSelectedMarker3dParameter,
+        onMarker3dDuplicate = viewModel::duplicateSelectedMarker3dSolid,
+        onMarker3dHide = viewModel::toggleSelectedMarker3dVisibility,
+        onMarker3dLock = viewModel::toggleSelectedMarker3dLock,
+        onMarker3dDelete = viewModel::deleteSelectedMarker3dSolid,
+        onMarker3dReset = viewModel::resetSelectedMarker3dSolid,
+        onMarker3dOverlay = viewModel::toggleMarker3dOverlay,
+        onMarker3dExplode = viewModel::toggleSelectedMarker3dExploded,
+        onMarker3dSection = viewModel::setSelectedMarker3dSection,
+        onMarker3dClipping = viewModel::setSelectedMarker3dClipping,
+        onMarker3dNet = viewModel::toggleSelectedMarker3dNet,
+        onMarkerCoordinateTool = viewModel::selectMarkerCoordinateTool,
+        onMarkerCoordinateAddPoint = viewModel::addMarkerCoordinatePoint,
+        onMarkerCoordinateSelectNext = viewModel::selectNextMarkerCoordinatePoint,
+        onMarkerCoordinateMovePoint = viewModel::moveSelectedMarkerCoordinatePoint,
+        onMarkerCoordinateSetPoint = viewModel::setSelectedMarkerCoordinatePoint,
+        onMarkerCoordinateApplyTool = viewModel::applyMarkerCoordinateTool,
+        onMarkerCoordinateSnap = viewModel::toggleMarkerCoordinateSnap,
+        onMarkerCoordinateFormat = viewModel::toggleMarkerCoordinateFormat,
+        onMarkerCoordinateSlopeTriangle = viewModel::toggleMarkerCoordinateSlopeTriangle,
+        onMarkerCoordinateTransform = viewModel::transformMarkerCoordinateSelection,
+        onMarkerTransformationTool = viewModel::selectMarkerTransformationTool,
+        onMarkerTransformShape = viewModel::selectMarkerTransformShape,
+        onMarkerTransformationSequenceStep = viewModel::addMarkerTransformationSequenceStep,
+        onClearMarkerTransformationSequence = viewModel::clearMarkerTransformationSequence,
+        onMarkerTransformProgress = viewModel::setMarkerTransformProgress,
+        onMarkerTranslationX = viewModel::setMarkerTranslationX,
+        onMarkerTranslationY = viewModel::setMarkerTranslationY,
+        onMarkerRotationDegrees = viewModel::setMarkerRotationDegrees,
+        onMarkerRotationCenterX = viewModel::setMarkerRotationCenterX,
+        onMarkerRotationCenterY = viewModel::setMarkerRotationCenterY,
+        onMarkerRotationDirection = viewModel::toggleMarkerRotationDirection,
+        onMarkerReflectionLine = viewModel::setMarkerReflectionLine,
+        onMarkerDilationScale = viewModel::setMarkerDilationScale,
+        onMarkerDilationCenterX = viewModel::setMarkerDilationCenterX,
+        onMarkerDilationCenterY = viewModel::setMarkerDilationCenterY,
+        onMarkerHorizontalStretch = viewModel::setMarkerHorizontalStretch,
+        onMarkerVerticalStretch = viewModel::setMarkerVerticalStretch,
+        onMarkerShear = viewModel::setMarkerShear,
+        onUndoMarkerTransformation = viewModel::undoMarkerTransformation,
+        onMarkerTrigAngle = viewModel::setMarkerTrigAngle,
+        onAddMarkerGraphFunction = viewModel::addMarkerGraphFunction,
+        onSelectMarkerGraphFunction = viewModel::selectMarkerGraphFunction,
+        onToggleSelectedMarkerGraphVisibility = viewModel::toggleSelectedMarkerGraphVisibility,
+        onDeleteSelectedMarkerGraphFunction = viewModel::deleteSelectedMarkerGraphFunction,
+        onDuplicateSelectedMarkerGraphFunction = viewModel::duplicateSelectedMarkerGraphFunction,
+        onMarkerGraphParameter = viewModel::updateSelectedMarkerGraphParameter,
+        onMarkerGraphTrace = viewModel::toggleMarkerGraphTrace,
+        onMarkerGraphTraceProgress = viewModel::setMarkerGraphTraceProgress,
+        onMarkerGraphZoom = viewModel::zoomMarkerGraph,
+        onMarkerGraphPan = viewModel::panMarkerGraph,
+        onMarkerGraphFit = viewModel::fitMarkerGraphView,
+        onMarkerGraphReset = viewModel::resetMarkerGraphView,
+        onMarkerGraphXMin = viewModel::updateMarkerGraphDomainXMin,
+        onMarkerGraphXMax = viewModel::updateMarkerGraphDomainXMax,
+        onMarkerGraphYMin = viewModel::updateMarkerGraphDomainYMin,
+        onMarkerGraphYMax = viewModel::updateMarkerGraphDomainYMax,
+        onToggleMarkerGraphGrid = viewModel::toggleMarkerGraphGrid,
+        onToggleMarkerGraphLabels = viewModel::toggleMarkerGraphLabels,
+        onToggleMarkerGraphIntercepts = viewModel::toggleMarkerGraphIntercepts,
+        onToggleMarkerGraphExtrema = viewModel::toggleMarkerGraphExtrema,
+        onToggleMarkerGraphDiscontinuities = viewModel::toggleMarkerGraphDiscontinuities,
+        onToggleMarkerGraphDerivative = viewModel::toggleMarkerGraphDerivative,
+        onToggleMarkerGraphIntegralArea = viewModel::toggleMarkerGraphIntegralArea,
+        onClearMarkerWorkspace = viewModel::clearMarkerWorkspace
+    )
+}
+
+@Composable
 private fun ArRuntime(
     state: ArViewerUiState,
     anchor: Anchor?,
@@ -560,6 +792,9 @@ private fun ArRuntime(
     onPaperGraphCalibrationTap: (PaperGraphCalibrationPoint) -> Unit,
     onPointLabelTap: (Float, Float, Float) -> Unit,
     onRulerAnchorTap: (Float, Float, Float) -> Unit,
+    onMarker2dWorkspaceTap: (Float, Float) -> Unit,
+    onMarker3dWorkspaceTap: (Float, Float) -> Unit,
+    onMarkerCoordinateWorkspaceTap: (Float, Float) -> Unit,
     onPlacementPoint: (Float, Float, Float) -> Unit,
     onOutdoorGeospatialFrame: (OutdoorGeospatialFrameState) -> Unit,
     onPlacementMissed: () -> Unit,
@@ -854,6 +1089,24 @@ private fun ArRuntime(
                                 return@rememberOnGestureListener
                             }
                         }
+                        if (paperGraphMode && anchor != null && state.markerMathActivity == MarkerMathActivity.Geometry2D) {
+                            val localX = ((event.x / viewportWidth.coerceAtLeast(1)) - 0.5f) * 0.72f
+                            val localY = (0.5f - (event.y / viewportHeight.coerceAtLeast(1))) * 0.72f
+                            onMarker2dWorkspaceTap(localX, localY)
+                            return@rememberOnGestureListener
+                        }
+                        if (paperGraphMode && anchor != null && state.markerMathActivity == MarkerMathActivity.Geometry3D) {
+                            val localX = ((event.x / viewportWidth.coerceAtLeast(1)) - 0.5f) * 0.72f
+                            val localZ = (0.5f - (event.y / viewportHeight.coerceAtLeast(1))) * 0.72f
+                            onMarker3dWorkspaceTap(localX, localZ)
+                            return@rememberOnGestureListener
+                        }
+                        if (paperGraphMode && anchor != null && state.markerMathActivity == MarkerMathActivity.CoordinateLab) {
+                            val localX = ((event.x / viewportWidth.coerceAtLeast(1)) - 0.5f) * 0.72f
+                            val localY = (0.5f - (event.y / viewportHeight.coerceAtLeast(1))) * 0.72f
+                            onMarkerCoordinateWorkspaceTap(localX, localY)
+                            return@rememberOnGestureListener
+                        }
                         val hit = findBestPlacementHit(
                             frame = frame,
                             x = event.x,
@@ -953,6 +1206,24 @@ private fun ArRuntime(
                             scale = Scale(interaction.zoom * if (interaction.expanded) 1.35f else 1f)
                         ) {
                             MarkerMeasurementWorkspaceNode(materialLoader, state)
+                        }
+                    }
+                    if (state.isQuietMarkerMode() && state.markerMathActivity == MarkerMathActivity.Geometry3D) {
+                        val interaction = state.markerLessonInteraction
+                        Node(
+                            rotation = Rotation(y = interaction.rotationDegrees),
+                            scale = Scale(interaction.zoom * if (interaction.expanded) 1.35f else 1f)
+                        ) {
+                            Marker3dSolidsWorkspaceNode(materialLoader, state)
+                        }
+                    }
+                    if (state.isQuietMarkerMode() && state.markerMathActivity == MarkerMathActivity.CoordinateLab) {
+                        val interaction = state.markerLessonInteraction
+                        Node(
+                            rotation = Rotation(y = interaction.rotationDegrees),
+                            scale = Scale(interaction.zoom * if (interaction.expanded) 1.35f else 1f)
+                        ) {
+                            MarkerCoordinateWorkspaceNode(materialLoader, state)
                         }
                     }
                     state.mathScene.objects
@@ -1055,6 +1326,141 @@ private fun NodeScope.MathObjectNode(type: MathObjectType, materialLoader: Mater
     }
 }
 
+@Composable
+private fun NodeScope.Marker3dSolidsWorkspaceNode(materialLoader: MaterialLoader, state: ArViewerUiState) {
+    val edge = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathCyan) }
+    val selected = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathViolet) }
+    val fill = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x6642E8FF)) }
+    val preview = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x88A45CFF)) }
+    val section = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
+    MarkerFlatGrid(axis = edge, gridMinor = fill, gridMajor = preview, origin = section)
+    state.marker3dSolids.filter { it.visible }.forEach { solid ->
+        key(solid.id) {
+            Node(
+                position = Position(solid.x, solid.lift, solid.z),
+                rotation = Rotation(x = solid.rotationX, y = solid.rotationY, z = solid.rotationZ),
+                scale = Scale(solid.scale)
+            ) {
+                Marker3dSolidNode(solid, state.marker3dOverlays, if (solid.selected) selected else edge, fill, section)
+                if (solid.selected) Marker3dGizmoNode(selected, section)
+            }
+        }
+    }
+    state.marker3dPreviewTool?.let { tool ->
+        Node(position = Position(state.marker3dPreviewX, state.marker3dPreviewLift, state.marker3dPreviewZ), scale = Scale(1f)) {
+            Marker3dSolidNode(
+                solid = Marker3dSolidState(
+                    id = "preview",
+                    tool = tool,
+                    label = tool.uiLabel(),
+                    parameters = tool.defaultUiParameters()
+                ),
+                overlays = setOf(Marker3dOverlayOption.Edges, Marker3dOverlayOption.Faces),
+                edge = preview,
+                fill = preview,
+                section = section
+            )
+        }
+    }
+}
+
+@Composable
+private fun NodeScope.Marker3dSolidNode(
+    solid: Marker3dSolidState,
+    overlays: Set<Marker3dOverlayOption>,
+    edge: MaterialInstance,
+    fill: MaterialInstance,
+    section: MaterialInstance
+) {
+    val dimensions = solid.dimensions()
+    if (Marker3dOverlayOption.Faces in overlays) {
+        CubeNode(
+            Size(dimensions.width * 0.82f, dimensions.height * 0.82f, dimensions.depth * 0.82f),
+            center = Position(0f, dimensions.height * 0.5f, 0f),
+            materialInstance = fill
+        )
+    }
+    when (solid.tool) {
+        Marker3dShapeTool.Cube,
+        Marker3dShapeTool.Cuboid,
+        Marker3dShapeTool.RectangularPrism,
+        Marker3dShapeTool.CustomPrism -> BoxEdges(edge, dimensions.width / 2f, dimensions.height, dimensions.depth / 2f)
+        Marker3dShapeTool.Sphere -> SphereWire(edge, dimensions.width / 2f)
+        Marker3dShapeTool.Hemisphere -> HemisphereWire(edge, dimensions.width / 2f)
+        Marker3dShapeTool.Cylinder -> CylinderWire(edge, dimensions.width / 2f, dimensions.height)
+        Marker3dShapeTool.Cone -> ConeWire(edge, dimensions.width / 2f, dimensions.height)
+        Marker3dShapeTool.Pyramid,
+        Marker3dShapeTool.CustomPyramid -> PyramidWire(edge, dimensions.width / 2f, dimensions.depth / 2f, dimensions.height, solid.exploded)
+        Marker3dShapeTool.TriangularPrism -> TriangularPrismWire(edge, dimensions.width, dimensions.height, dimensions.depth)
+        Marker3dShapeTool.Tetrahedron -> TetrahedronWire(edge, dimensions.width)
+        Marker3dShapeTool.Torus -> TorusWire(edge, dimensions.width / 2f, dimensions.height / 3f)
+        Marker3dShapeTool.Frustum -> FrustumWire(edge, dimensions.width / 2f, dimensions.width / 3f, dimensions.height)
+    }
+    if (Marker3dOverlayOption.Vertices in overlays) Marker3dVertexNodes(solid, dimensions, section)
+    if (Marker3dOverlayOption.CrossSection in overlays || solid.sectionMode != Marker3dSectionMode.None) {
+        val y = dimensions.height * solid.clipping
+        when (solid.sectionMode) {
+            Marker3dSectionMode.Vertical -> {
+                LineNode(Position(0f, 0f, -dimensions.depth * 0.62f), Position(0f, dimensions.height, -dimensions.depth * 0.62f), section)
+                LineNode(Position(0f, dimensions.height, -dimensions.depth * 0.62f), Position(0f, dimensions.height, dimensions.depth * 0.62f), section)
+                LineNode(Position(0f, dimensions.height, dimensions.depth * 0.62f), Position(0f, 0f, dimensions.depth * 0.62f), section)
+                LineNode(Position(0f, 0f, dimensions.depth * 0.62f), Position(0f, 0f, -dimensions.depth * 0.62f), section)
+            }
+            else -> {
+                LineNode(Position(-dimensions.width * 0.62f, y, -dimensions.depth * 0.62f), Position(dimensions.width * 0.62f, y, -dimensions.depth * 0.62f), section)
+                LineNode(Position(dimensions.width * 0.62f, y, -dimensions.depth * 0.62f), Position(dimensions.width * 0.62f, y, dimensions.depth * 0.62f), section)
+                LineNode(Position(dimensions.width * 0.62f, y, dimensions.depth * 0.62f), Position(-dimensions.width * 0.62f, y, dimensions.depth * 0.62f), section)
+                LineNode(Position(-dimensions.width * 0.62f, y, dimensions.depth * 0.62f), Position(-dimensions.width * 0.62f, y, -dimensions.depth * 0.62f), section)
+            }
+        }
+    }
+    if (solid.showNet || Marker3dOverlayOption.Net in overlays) Marker3dNetNode(solid, edge, section)
+}
+
+@Composable
+private fun NodeScope.Marker3dGizmoNode(edge: MaterialInstance, lift: MaterialInstance) {
+    ThickLineRenderer(Position(0f, 0f, 0f), Position(0.18f, 0f, 0f), edge, edge, ThickLineStyle(widthDp = 4f, glowWidthDp = 6f))
+    LineNode(Position(0f, 0f, 0f), Position(0f, 0.18f, 0f), lift)
+    ThickLineRenderer(Position(0f, 0f, 0f), Position(0f, 0f, 0.18f), edge, edge, ThickLineStyle(widthDp = 4f, glowWidthDp = 6f))
+    RadiantPointRenderer(Position(0.18f, 0f, 0f), edge, edge, edge, RadiantPointStyle(isDraggable = true))
+    RadiantPointRenderer(Position(0f, 0.18f, 0f), lift, lift, lift, RadiantPointStyle(isDraggable = true))
+    RadiantPointRenderer(Position(0f, 0f, 0.18f), edge, edge, edge, RadiantPointStyle(isDraggable = true))
+}
+
+private data class MarkerSolidDimensions(val width: Float, val height: Float, val depth: Float)
+
+private fun Marker3dSolidState.dimensions(): MarkerSolidDimensions = when (tool) {
+    Marker3dShapeTool.Cube -> {
+        val side = parameters["side"] ?: 0.16f
+        MarkerSolidDimensions(side, side, side)
+    }
+    Marker3dShapeTool.Cuboid,
+    Marker3dShapeTool.RectangularPrism -> MarkerSolidDimensions(parameters["length"] ?: 0.22f, parameters["height"] ?: 0.16f, parameters["width"] ?: 0.14f)
+    Marker3dShapeTool.Sphere,
+    Marker3dShapeTool.Hemisphere,
+    Marker3dShapeTool.Torus -> {
+        val diameter = (parameters["radius"] ?: 0.1f) * 2f
+        MarkerSolidDimensions(diameter, diameter, diameter)
+    }
+    Marker3dShapeTool.Cylinder,
+    Marker3dShapeTool.Cone,
+    Marker3dShapeTool.Frustum -> {
+        val diameter = (parameters["radius"] ?: 0.09f) * 2f
+        MarkerSolidDimensions(diameter, parameters["height"] ?: 0.2f, diameter)
+    }
+    Marker3dShapeTool.Pyramid,
+    Marker3dShapeTool.CustomPyramid -> {
+        val base = parameters["base"] ?: 0.2f
+        MarkerSolidDimensions(base, parameters["height"] ?: 0.2f, base)
+    }
+    Marker3dShapeTool.TriangularPrism,
+    Marker3dShapeTool.CustomPrism -> MarkerSolidDimensions(parameters["base"] ?: 0.18f, parameters["height"] ?: 0.16f, parameters["length"] ?: 0.24f)
+    Marker3dShapeTool.Tetrahedron -> {
+        val side = parameters["side"] ?: 0.18f
+        MarkerSolidDimensions(side, side * 0.82f, side)
+    }
+}
+
 private fun MathObjectType.isGraphLike(): Boolean =
     this in setOf(MathObjectType.SineCurve, MathObjectType.CoordinatePlane, MathObjectType.NumberLine, MathObjectType.VectorArrow)
 
@@ -1068,16 +1474,20 @@ private fun NodeScope.MarkerGraphWorkspaceNode(
     val gridMajor = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFB88CFF).copy(alpha = 0.42f)) }
     val zAxis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFEDE7FF)) }
     val origin = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF5CFFF0)) }
+    val analysis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
+    val discontinuity = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFF6B8A)) }
+    val axisGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color.White.copy(alpha = 0.22f)) }
+    val pointGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x665CFFF0)) }
     val palette = remember(materialLoader, state.graphColorMap) {
         listOf(
-            Color(0xFF4D5CFF),
-            Color(0xFF8F5CFF),
             Color(0xFF46D7FF),
-            Color(0xFF63F2C6),
+            Color(0xFFA45CFF),
+            Color(0xFF58F2C2),
+            Color(0xFFFFC857),
             Color(0xFFFF7BCB)
         ).map { materialLoader.createUnlitColorInstance(it) }
     }
-    MarkerGraphBaseGrid(axis, gridMinor, gridMajor, zAxis, origin)
+    MarkerGraphBaseGrid(axis, gridMinor, gridMajor, zAxis, origin, axisGlow, pointGlow, state)
     state.markerGraphFunctions
         .filter { it.visible && it.isValid }
         .forEach { graph ->
@@ -1088,8 +1498,10 @@ private fun NodeScope.MarkerGraphWorkspaceNode(
             }
         }
     state.markerGraphFunctions.firstOrNull { it.selected && it.visible && it.isValid }?.let { graph ->
-        MarkerGraphTraceNode(graph, state, axis, origin)
+        MarkerGraphTraceNode(graph, state, axis, origin, pointGlow)
+        MarkerGraphAnalysisNodes(graph, state, analysis, discontinuity, pointGlow)
     }
+    MarkerGraphWorkspaceAnnotations(state, palette, analysis, pointGlow)
 }
 
 @Composable
@@ -1098,34 +1510,40 @@ private fun NodeScope.MarkerGraphBaseGrid(
     gridMinor: MaterialInstance,
     gridMajor: MaterialInstance,
     zAxis: MaterialInstance,
-    origin: MaterialInstance
+    origin: MaterialInstance,
+    axisGlow: MaterialInstance,
+    pointGlow: MaterialInstance,
+    state: ArViewerUiState
 ) {
     val half = 0.28f
-    (-8..8).forEach { i ->
-        val p = i * (half / 8f)
-        val material = if (i % 4 == 0) gridMajor else gridMinor
-        LineNode(Position(-half, 0.004f, p), Position(half, 0.004f, p), material)
-        LineNode(Position(p, 0.004f, -half), Position(p, 0.004f, half), material)
+    if (state.markerGraphShowGrid) {
+        (-8..8).forEach { i ->
+            val p = i * (half / 8f)
+            val material = if (i % 4 == 0) gridMajor else gridMinor
+            ThickLineRenderer(Position(-half, 0.004f, p), Position(half, 0.004f, p), material, material, ThickLineStyle(widthDp = if (i % 4 == 0) 2f else 1f, glowWidthDp = if (i % 4 == 0) 3f else 1.4f))
+            ThickLineRenderer(Position(p, 0.004f, -half), Position(p, 0.004f, half), material, material, ThickLineStyle(widthDp = if (i % 4 == 0) 2f else 1f, glowWidthDp = if (i % 4 == 0) 3f else 1.4f))
+        }
     }
-    LineNode(Position(-0.32f, 0.012f, 0f), Position(0.32f, 0.012f, 0f), axis)
-    LineNode(Position(0f, 0.012f, -0.32f), Position(0f, 0.012f, 0.32f), axis)
+    ThickLineRenderer(Position(-0.32f, 0.012f, 0f), Position(0.32f, 0.012f, 0f), axis, axisGlow, ThickLineStyle(widthDp = 5.5f, glowWidthDp = 8.5f))
+    ThickLineRenderer(Position(0f, 0.012f, -0.32f), Position(0f, 0.012f, 0.32f), axis, axisGlow, ThickLineStyle(widthDp = 5.5f, glowWidthDp = 8.5f))
     LineNode(Position(0f, 0.012f, 0f), Position(0f, 0.42f, 0f), zAxis)
-    LineNode(Position(0.32f, 0.012f, 0f), Position(0.285f, 0.012f, 0.018f), axis)
-    LineNode(Position(0.32f, 0.012f, 0f), Position(0.285f, 0.012f, -0.018f), axis)
-    LineNode(Position(0f, 0.012f, 0.32f), Position(0.018f, 0.012f, 0.285f), axis)
-    LineNode(Position(0f, 0.012f, 0.32f), Position(-0.018f, 0.012f, 0.285f), axis)
+    ThickLineRenderer(Position(0.32f, 0.012f, 0f), Position(0.285f, 0.012f, 0.018f), axis, axisGlow, ThickLineStyle(widthDp = 4f, glowWidthDp = 6f))
+    ThickLineRenderer(Position(0.32f, 0.012f, 0f), Position(0.285f, 0.012f, -0.018f), axis, axisGlow, ThickLineStyle(widthDp = 4f, glowWidthDp = 6f))
+    ThickLineRenderer(Position(0f, 0.012f, 0.32f), Position(0.018f, 0.012f, 0.285f), axis, axisGlow, ThickLineStyle(widthDp = 4f, glowWidthDp = 6f))
+    ThickLineRenderer(Position(0f, 0.012f, 0.32f), Position(-0.018f, 0.012f, 0.285f), axis, axisGlow, ThickLineStyle(widthDp = 4f, glowWidthDp = 6f))
     LineNode(Position(0f, 0.42f, 0f), Position(0.018f, 0.38f, 0f), zAxis)
     LineNode(Position(0f, 0.42f, 0f), Position(-0.018f, 0.38f, 0f), zAxis)
     (-2..2).forEach { tick ->
         val p = tick * 0.12f
-        LineNode(Position(p, 0.018f, -0.014f), Position(p, 0.018f, 0.014f), axis)
-        LineNode(Position(-0.014f, 0.018f, p), Position(0.014f, 0.018f, p), axis)
+        ThickLineRenderer(Position(p, 0.018f, -0.014f), Position(p, 0.018f, 0.014f), axis, axisGlow, ThickLineStyle(widthDp = 2.4f, glowWidthDp = 4f))
+        ThickLineRenderer(Position(-0.014f, 0.018f, p), Position(0.014f, 0.018f, p), axis, axisGlow, ThickLineStyle(widthDp = 2.4f, glowWidthDp = 4f))
         if (tick != 0) {
-            CubeNode(Size(0.012f, 0.012f, 0.012f), center = Position(p, 0.022f, 0f), materialInstance = gridMajor)
-            CubeNode(Size(0.012f, 0.012f, 0.012f), center = Position(0f, 0.022f, p), materialInstance = gridMajor)
+            val tickSize = if (state.markerGraphShowLabels) 0.014f else 0.01f
+            RadiantPointRenderer(Position(p, 0.022f, 0f), gridMajor, pointGlow, gridMajor, RadiantPointStyle(centreRadius = tickSize * 0.45f, haloRadius = tickSize))
+            RadiantPointRenderer(Position(0f, 0.022f, p), gridMajor, pointGlow, gridMajor, RadiantPointStyle(centreRadius = tickSize * 0.45f, haloRadius = tickSize))
         }
     }
-    CubeNode(Size(0.024f, 0.024f, 0.024f), center = Position(0f, 0.024f, 0f), materialInstance = origin)
+    RadiantPointRenderer(Position(0f, 0.024f, 0f), origin, pointGlow, origin, RadiantPointStyle(isSelected = true))
 }
 
 @Composable
@@ -1166,10 +1584,12 @@ private fun NodeScope.MarkerCurveGraph(
     val samples = markerFunctionSamples(graph.compiled, state.arGraphDomain, 220)
     samples.zipWithNext().forEach { (a, b) ->
         if (a.y.isFinite() && b.y.isFinite() && abs(a.y - b.y) <= discontinuityThreshold(state.arGraphDomain)) {
-            LineNode(
+            ThickLineRenderer(
                 Position(markerGraphX(a.x.toFloat(), state.arGraphDomain), 0.04f, markerGraphY(a.y.toFloat(), state.arGraphDomain)),
                 Position(markerGraphX(b.x.toFloat(), state.arGraphDomain), 0.04f, markerGraphY(b.y.toFloat(), state.arGraphDomain)),
-                material
+                material,
+                material,
+                ThickLineStyle(widthDp = if (graph.selected) 7f else 5.5f, glowWidthDp = if (graph.selected) 11f else 8f, isSelected = graph.selected)
             )
         }
     }
@@ -1180,23 +1600,26 @@ private fun NodeScope.MarkerGraphTraceNode(
     graph: MarkerGraphFunctionState,
     state: ArViewerUiState,
     line: MaterialInstance,
-    pointMaterial: MaterialInstance
+    pointMaterial: MaterialInstance,
+    pointGlow: MaterialInstance
 ) {
     if (state.markerGraphTraceMode == MarkerGraphTraceMode.Off) return
     val x = state.arGraphDomain.xMin + (state.arGraphDomain.xMax - state.arGraphDomain.xMin) * state.markerGraphTraceProgress
     val y = arRenderMathEngine.evaluate2dUnclamped(graph.compiled, x)
     if (!y.isFinite() || y !in state.arGraphDomain.yMin..state.arGraphDomain.yMax) return
     val point = Position(markerGraphX(x.toFloat(), state.arGraphDomain), 0.075f, markerGraphY(y.toFloat(), state.arGraphDomain))
-    CubeNode(Size(0.024f, 0.024f, 0.024f), center = point, materialInstance = pointMaterial)
+    RadiantPointRenderer(point, pointMaterial, pointGlow, pointMaterial, RadiantPointStyle(isSelected = true, isDraggable = true))
     if (state.markerGraphTraceMode == MarkerGraphTraceMode.Tangent || state.markerGraphShowDerivative) {
         val slope = state.arGraphAnalysis.tangent?.tangentSlope ?: 0.0
         val dx = (state.arGraphDomain.xMax - state.arGraphDomain.xMin) * 0.08
         val y0 = y - slope * dx
         val y1 = y + slope * dx
-        LineNode(
+        ThickLineRenderer(
             Position(markerGraphX((x - dx).toFloat(), state.arGraphDomain), 0.062f, markerGraphY(y0.toFloat(), state.arGraphDomain)),
             Position(markerGraphX((x + dx).toFloat(), state.arGraphDomain), 0.062f, markerGraphY(y1.toFloat(), state.arGraphDomain)),
-            line
+            line,
+            pointGlow,
+            ThickLineStyle(widthDp = 4.5f, glowWidthDp = 7f)
         )
     }
     if (state.markerGraphTraceMode == MarkerGraphTraceMode.Integral || state.markerGraphShowIntegralArea) {
@@ -1204,12 +1627,53 @@ private fun NodeScope.MarkerGraphTraceNode(
         val upper = max(state.arGraphDomain.xMin, x)
         markerFunctionSamples(graph.compiled, state.arGraphDomain.copy(xMin = lower, xMax = upper), 48).forEach { sample ->
             if (sample.y.isFinite()) {
-                LineNode(
+                ThickLineRenderer(
                     Position(markerGraphX(sample.x.toFloat(), state.arGraphDomain), 0.024f, 0f),
                     Position(markerGraphX(sample.x.toFloat(), state.arGraphDomain), 0.024f, markerGraphY(sample.y.toFloat(), state.arGraphDomain)),
-                    line
+                    line,
+                    pointGlow,
+                    ThickLineStyle(widthDp = 2.2f, glowWidthDp = 3f, opacity = 0.45f)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun NodeScope.MarkerGraphAnalysisNodes(
+    graph: MarkerGraphFunctionState,
+    state: ArViewerUiState,
+    markerMaterial: MaterialInstance,
+    warningMaterial: MaterialInstance,
+    pointGlow: MaterialInstance
+) {
+    if (state.markerGraphShowIntercepts) {
+        state.arGraphAnalysis.roots.forEach { point ->
+            if (point.x in state.arGraphDomain.xMin..state.arGraphDomain.xMax) {
+                RadiantPointRenderer(Position(markerGraphX(point.x.toFloat(), state.arGraphDomain), 0.07f, markerGraphY(0f, state.arGraphDomain)), markerMaterial, pointGlow, markerMaterial)
+            }
+        }
+        val yIntercept = arRenderMathEngine.evaluate2dUnclamped(graph.compiled, 0.0)
+        if (yIntercept.isFinite() && yIntercept in state.arGraphDomain.yMin..state.arGraphDomain.yMax) {
+            RadiantPointRenderer(Position(markerGraphX(0f, state.arGraphDomain), 0.07f, markerGraphY(yIntercept.toFloat(), state.arGraphDomain)), markerMaterial, pointGlow, markerMaterial)
+        }
+    }
+    if (state.markerGraphShowExtrema) {
+        state.arGraphAnalysis.extrema.forEach { point ->
+            if (point.x in state.arGraphDomain.xMin..state.arGraphDomain.xMax && point.y in state.arGraphDomain.yMin..state.arGraphDomain.yMax) {
+                RadiantPointRenderer(Position(markerGraphX(point.x.toFloat(), state.arGraphDomain), 0.085f, markerGraphY(point.y.toFloat(), state.arGraphDomain)), markerMaterial, pointGlow, markerMaterial, RadiantPointStyle(isSelected = true))
+            }
+        }
+    }
+    if (state.markerGraphShowDiscontinuities) {
+        markerDiscontinuityCandidates(graph.compiled, state.arGraphDomain).forEach { x ->
+            ThickLineRenderer(
+                Position(markerGraphX(x.toFloat(), state.arGraphDomain), 0.018f, -0.32f),
+                Position(markerGraphX(x.toFloat(), state.arGraphDomain), 0.018f, 0.32f),
+                warningMaterial,
+                pointGlow,
+                ThickLineStyle(widthDp = 3f, glowWidthDp = 5f, isDashed = true)
+            )
         }
     }
 }
@@ -1229,6 +1693,150 @@ private fun markerFunctionSamples(compiled: ArCompiledExpression, domain: ArGrap
 
 private fun discontinuityThreshold(domain: ArGraphDomain): Double =
     max(3.0, (domain.yMax - domain.yMin) * 0.65)
+
+private fun markerDiscontinuityCandidates(compiled: ArCompiledExpression, domain: ArGraphDomain): List<Double> {
+    val samples = markerFunctionSamples(compiled, domain, 160)
+    return samples.zipWithNext().mapNotNull { (a, b) ->
+        when {
+            !a.y.isFinite() && b.y.isFinite() -> b.x
+            a.y.isFinite() && !b.y.isFinite() -> a.x
+            a.y.isFinite() && b.y.isFinite() && abs(a.y - b.y) > discontinuityThreshold(domain) -> (a.x + b.x) / 2.0
+            else -> null
+        }
+    }.distinctBy { "%.2f".format(it) }.take(10)
+}
+
+private data class MarkerGraphAnnotation(
+    val x: Double,
+    val y: Double,
+    val label: String,
+    val colorIndex: Int,
+    val priority: Int = 0
+)
+
+@Composable
+private fun NodeScope.MarkerGraphWorkspaceAnnotations(
+    state: ArViewerUiState,
+    palette: List<MaterialInstance>,
+    markerMaterial: MaterialInstance,
+    markerGlow: MaterialInstance
+) {
+    val graphs = state.markerGraphFunctions.filter { it.visible && it.isValid && it.compiled.kind != GraphExpressionKind.ExplicitSurface3D }
+    val annotations = remember(graphs, state.arGraphDomain, state.markerGraphShowIntercepts, state.markerGraphShowExtrema) {
+        markerGraphAnnotations(graphs, state.arGraphDomain, state.markerGraphShowIntercepts, state.markerGraphShowExtrema)
+    }
+    annotations.take(12).forEach { annotation ->
+        val x = markerGraphX(annotation.x.toFloat(), state.arGraphDomain)
+        val z = markerGraphY(annotation.y.toFloat(), state.arGraphDomain)
+        val material = palette.getOrElse(annotation.colorIndex.floorMod(palette.size)) { markerMaterial }
+        RadiantPointRenderer(
+            center = Position(x, 0.09f, z),
+            materialInstance = material,
+            glowMaterialInstance = markerGlow,
+            haloMaterialInstance = material,
+            style = RadiantPointStyle(isSelected = annotation.priority >= 2)
+        )
+    }
+}
+
+private fun markerGraphAnnotations(
+    graphs: List<MarkerGraphFunctionState>,
+    domain: ArGraphDomain,
+    showIntercepts: Boolean,
+    showExtrema: Boolean
+): List<MarkerGraphAnnotation> {
+    val annotations = mutableListOf<MarkerGraphAnnotation>()
+    if (showIntercepts) {
+        graphs.forEachIndexed { graphIndex, graph ->
+            markerGraphRoots(graph.compiled, domain).take(4).forEach { x ->
+                annotations += MarkerGraphAnnotation(x, 0.0, "(${x.graphLabel()}, 0)\nx-intercept", graph.colorIndex, priority = 1)
+            }
+            val yIntercept = arRenderMathEngine.evaluate2dUnclamped(graph.compiled, 0.0)
+            if (yIntercept.isFinite() && yIntercept in domain.yMin..domain.yMax) {
+                annotations += MarkerGraphAnnotation(0.0, yIntercept, "(0, ${yIntercept.graphLabel()})\ny-intercept", graph.colorIndex, priority = 1)
+            }
+            markerGraphPairIntersections(graphs.drop(graphIndex + 1), graph, domain).take(3).forEach { (x, y) ->
+                annotations += MarkerGraphAnnotation(x, y, "(${x.graphLabel()}, ${y.graphLabel()})\nintersection", graph.colorIndex, priority = 2)
+            }
+        }
+    }
+    if (showExtrema) {
+        graphs.forEach { graph ->
+            markerGraphExtrema(graph.compiled, domain).take(3).forEach { (x, y) ->
+                annotations += MarkerGraphAnnotation(x, y, "(${x.graphLabel()}, ${y.graphLabel()})\nvertex", graph.colorIndex, priority = 2)
+            }
+        }
+    }
+    return annotations
+        .filter { it.x in domain.xMin..domain.xMax && it.y in domain.yMin..domain.yMax }
+        .distinctBy { "${it.label}-${it.x.graphLabel()}-${it.y.graphLabel()}" }
+        .sortedWith(compareByDescending<MarkerGraphAnnotation> { it.priority }.thenBy { abs(it.x) + abs(it.y) })
+}
+
+private fun markerGraphRoots(compiled: ArCompiledExpression, domain: ArGraphDomain): List<Double> {
+    val samples = markerFunctionSamples(compiled, domain, 260)
+    return samples.zipWithNext().mapNotNull { (a, b) ->
+        when {
+            !a.y.isFinite() || !b.y.isFinite() -> null
+            abs(a.y) < 0.04 -> a.x
+            a.y.signChangedWith(b.y) -> interpolateZero(a.x, a.y, b.x, b.y)
+            else -> null
+        }
+    }.distinctClose()
+}
+
+private fun markerGraphExtrema(compiled: ArCompiledExpression, domain: ArGraphDomain): List<Pair<Double, Double>> {
+    val samples = markerFunctionSamples(compiled, domain, 320).filter { it.y.isFinite() }
+    return samples.windowed(3).mapNotNull { (a, b, c) ->
+        val isMin = b.y <= a.y && b.y <= c.y && (a.y - b.y > 0.03 || c.y - b.y > 0.03)
+        val isMax = b.y >= a.y && b.y >= c.y && (b.y - a.y > 0.03 || b.y - c.y > 0.03)
+        if (isMin || isMax) b.x to b.y else null
+    }.distinctBy { it.first.graphLabel() }.take(6)
+}
+
+private fun markerGraphPairIntersections(
+    others: List<MarkerGraphFunctionState>,
+    graph: MarkerGraphFunctionState,
+    domain: ArGraphDomain
+): List<Pair<Double, Double>> =
+    others.flatMap { other ->
+        val samples = (0..280).map { index ->
+            val x = domain.xMin + (domain.xMax - domain.xMin) * index / 280.0
+            val yA = arRenderMathEngine.evaluate2dUnclamped(graph.compiled, x)
+            val yB = arRenderMathEngine.evaluate2dUnclamped(other.compiled, x)
+            MarkerGraphSample(x, if (yA.isFinite() && yB.isFinite()) yA - yB else Double.NaN)
+        }
+        samples.zipWithNext().mapNotNull { (a, b) ->
+            if (!a.y.isFinite() || !b.y.isFinite() || !a.y.signChangedWith(b.y)) return@mapNotNull null
+            val x = interpolateZero(a.x, a.y, b.x, b.y)
+            val y = arRenderMathEngine.evaluate2dUnclamped(graph.compiled, x)
+            if (y.isFinite()) x to y else null
+        }
+    }.distinctBy { it.first.graphLabel() }
+
+private fun Double.signChangedWith(other: Double): Boolean = (this < 0.0 && other > 0.0) || (this > 0.0 && other < 0.0)
+
+private fun interpolateZero(x0: Double, y0: Double, x1: Double, y1: Double): Double =
+    x0 + (0.0 - y0) * (x1 - x0) / (y1 - y0).let { if (abs(it) > 1e-9) it else 1e-9 }
+
+private fun List<Double>.distinctClose(): List<Double> =
+    sorted().fold(emptyList()) { acc, value -> if (acc.any { abs(it - value) < 0.08 }) acc else acc + value }
+
+private fun Double.graphLabel(): String =
+    when {
+        abs(this) < 0.0001 -> "0"
+        abs(this - kotlin.math.round(this)) < 0.015 -> kotlin.math.round(this).toInt().toString()
+        else -> "%.3f".format(this).trimEnd('0').trimEnd('.')
+    }
+
+private fun markerGraphLabelColor(colorIndex: Int): Int = when (colorIndex.floorMod(6)) {
+    0 -> android.graphics.Color.rgb(70, 235, 255)
+    1 -> android.graphics.Color.rgb(180, 110, 255)
+    2 -> android.graphics.Color.rgb(88, 242, 194)
+    3 -> android.graphics.Color.rgb(255, 200, 87)
+    4 -> android.graphics.Color.rgb(255, 123, 203)
+    else -> android.graphics.Color.rgb(255, 255, 255)
+}
 
 private fun markerGraphX(x: Float): Float = (x / (2f * PI.toFloat())).coerceIn(-1f, 1f) * 0.28f
 
@@ -1253,20 +1861,22 @@ private fun NodeScope.MarkerTransformationWorkspaceNode(
     val transformedMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFA45CFF)) }
     val pathMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
     val matrixMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF58F2C2)) }
+    val centerMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFF176)) }
     MarkerFlatGrid(axis, gridMinor, gridMajor, origin)
-    val original = listOf(
-        MarkerPlanePoint(-0.13f, -0.1f),
-        MarkerPlanePoint(0.13f, -0.08f),
-        MarkerPlanePoint(-0.02f, 0.13f)
-    )
+    val original = markerTransformShapePoints(state.markerTransformShape)
     val target = original.map { it.transformedBy(state) }
     val current = original.zip(target).map { (start, end) -> start.lerpTo(end, state.markerTransformProgress) }
-    MarkerPolygon(original, originalMaterial, height = 0.034f)
-    MarkerPolygon(current, transformedMaterial, height = 0.062f)
+    MarkerShape(original, state.markerTransformShape, originalMaterial, height = 0.034f)
+    MarkerShape(current, state.markerTransformShape, transformedMaterial, height = 0.062f)
     original.zip(current).forEach { (start, end) ->
-        LineNode(start.toPosition(0.048f), end.toPosition(0.048f), pathMaterial)
-        CubeNode(Size(0.018f, 0.018f, 0.018f), center = end.toPosition(0.068f), materialInstance = transformedMaterial)
+        ThickLineRenderer(start.toPosition(0.048f), end.toPosition(0.048f), pathMaterial, pathMaterial, ThickLineStyle(widthDp = 3f, glowWidthDp = 5f, isDashed = true))
+        VectorHead(start.toPosition(0.048f), end.toPosition(0.048f), pathMaterial)
+        RadiantPointRenderer(end.toPosition(0.068f), transformedMaterial, transformedMaterial, transformedMaterial, RadiantPointStyle(isSelected = true))
     }
+    target.forEach { point ->
+        ThickLineRenderer(point.toPosition(0.02f), point.toPosition(0.09f), matrixMaterial, matrixMaterial, ThickLineStyle(widthDp = 2f, glowWidthDp = 3f))
+    }
+    MarkerTransformCenterNode(state, centerMaterial)
     MarkerTransformationMatrixGlyph(state, matrixMaterial)
 }
 
@@ -1289,18 +1899,18 @@ private fun NodeScope.MarkerTrigonometryWorkspaceNode(
         val a = index * 2f * PI.toFloat() / 96f
         MarkerPlanePoint(cos(a) * r, sin(a) * r)
     }
-    samples.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(0.045f), b.toPosition(0.045f), circle) }
-    LineNode(MarkerPlanePoint(0f, 0f).toPosition(0.07f), p.toPosition(0.07f), radius)
-    LineNode(MarkerPlanePoint(0f, 0f).toPosition(0.052f), xFoot.toPosition(0.052f), projection)
-    LineNode(xFoot.toPosition(0.052f), p.toPosition(0.052f), projection)
-    CubeNode(Size(0.02f, 0.02f, 0.02f), center = p.toPosition(0.078f), materialInstance = pointMaterial)
+    samples.zipWithNext().forEach { (a, b) -> ThickLineRenderer(a.toPosition(0.045f), b.toPosition(0.045f), circle, circle, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f)) }
+    ThickLineRenderer(MarkerPlanePoint(0f, 0f).toPosition(0.07f), p.toPosition(0.07f), radius, radius, ThickLineStyle(widthDp = 5f, glowWidthDp = 8f))
+    ThickLineRenderer(MarkerPlanePoint(0f, 0f).toPosition(0.052f), xFoot.toPosition(0.052f), projection, projection, ThickLineStyle(widthDp = 3.5f, glowWidthDp = 6f))
+    ThickLineRenderer(xFoot.toPosition(0.052f), p.toPosition(0.052f), projection, projection, ThickLineStyle(widthDp = 3.5f, glowWidthDp = 6f))
+    RadiantPointRenderer(p.toPosition(0.078f), pointMaterial, pointMaterial, pointMaterial, RadiantPointStyle(isSelected = true, isDraggable = true))
     val wave = (0..72).map { index ->
         val theta = index * 2f * PI.toFloat() / 72f
         MarkerPlanePoint(-0.27f + index * (0.54f / 72f), -0.27f + sin(theta) * 0.055f)
     }
-    wave.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(0.042f), b.toPosition(0.042f), radius) }
+    wave.zipWithNext().forEach { (a, b) -> ThickLineRenderer(a.toPosition(0.042f), b.toPosition(0.042f), radius, radius, ThickLineStyle(widthDp = 4.5f, glowWidthDp = 7f)) }
     val markerX = -0.27f + (state.markerTrigAngleDegrees / 360f) * 0.54f
-    LineNode(Position(markerX, 0.045f, -0.34f), Position(markerX, 0.12f, -0.34f), projection)
+    ThickLineRenderer(Position(markerX, 0.045f, -0.34f), Position(markerX, 0.12f, -0.34f), projection, projection, ThickLineStyle(widthDp = 3f, glowWidthDp = 5f))
 }
 
 @Composable
@@ -1319,12 +1929,12 @@ private fun NodeScope.MarkerMeasurementWorkspaceNode(
     val c = MarkerPlanePoint(0.04f, 0.15f)
     MarkerPolygon(listOf(a, b, c), shape, height = 0.055f)
     val foot = MarkerPlanePoint(c.x, a.y)
-    LineNode(c.toPosition(0.075f), foot.toPosition(0.075f), measure)
-    LineNode(a.toPosition(0.075f), b.toPosition(0.075f), measure)
-    LineNode(MarkerPlanePoint(-0.02f, -0.1f).toPosition(0.09f), MarkerPlanePoint(0.03f, -0.05f).toPosition(0.09f), angle)
-    LineNode(MarkerPlanePoint(0.03f, -0.05f).toPosition(0.09f), MarkerPlanePoint(0.08f, -0.1f).toPosition(0.09f), angle)
+    ThickLineRenderer(c.toPosition(0.075f), foot.toPosition(0.075f), measure, measure, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f))
+    ThickLineRenderer(a.toPosition(0.075f), b.toPosition(0.075f), measure, measure, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f))
+    ThickLineRenderer(MarkerPlanePoint(-0.02f, -0.1f).toPosition(0.09f), MarkerPlanePoint(0.03f, -0.05f).toPosition(0.09f), angle, angle, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f))
+    ThickLineRenderer(MarkerPlanePoint(0.03f, -0.05f).toPosition(0.09f), MarkerPlanePoint(0.08f, -0.1f).toPosition(0.09f), angle, angle, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f))
     listOf(a, b, c, foot).forEach {
-        CubeNode(Size(0.018f, 0.018f, 0.018f), center = it.toPosition(0.084f), materialInstance = measure)
+        RadiantPointRenderer(it.toPosition(0.084f), measure, measure, measure, RadiantPointStyle(isDraggable = true))
     }
 }
 
@@ -1339,18 +1949,39 @@ private fun NodeScope.MarkerFlatGrid(
     (-8..8).forEach { i ->
         val p = i * (half / 8f)
         val material = if (i % 4 == 0) gridMajor else gridMinor
-        LineNode(Position(-half, 0.012f, p), Position(half, 0.012f, p), material)
-        LineNode(Position(p, 0.012f, -half), Position(p, 0.012f, half), material)
+        ThickLineRenderer(Position(-half, 0.012f, p), Position(half, 0.012f, p), material, material, ThickLineStyle(widthDp = if (i % 4 == 0) 2f else 1f, glowWidthDp = if (i % 4 == 0) 3f else 1.4f))
+        ThickLineRenderer(Position(p, 0.012f, -half), Position(p, 0.012f, half), material, material, ThickLineStyle(widthDp = if (i % 4 == 0) 2f else 1f, glowWidthDp = if (i % 4 == 0) 3f else 1.4f))
     }
-    LineNode(Position(-0.36f, 0.02f, 0f), Position(0.36f, 0.02f, 0f), axis)
-    LineNode(Position(0f, 0.02f, -0.36f), Position(0f, 0.02f, 0.36f), axis)
-    CubeNode(Size(0.016f, 0.016f, 0.016f), center = Position(0f, 0.03f, 0f), materialInstance = origin)
+    ThickLineRenderer(Position(-0.36f, 0.02f, 0f), Position(0.36f, 0.02f, 0f), axis, axis, ThickLineStyle(widthDp = 5f, glowWidthDp = 8f))
+    ThickLineRenderer(Position(0f, 0.02f, -0.36f), Position(0f, 0.02f, 0.36f), axis, axis, ThickLineStyle(widthDp = 5f, glowWidthDp = 8f))
+    RadiantPointRenderer(Position(0f, 0.03f, 0f), origin, origin, origin)
 }
 
 @Composable
 private fun NodeScope.MarkerPolygon(points: List<MarkerPlanePoint>, material: MaterialInstance, height: Float) {
-    points.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(height), b.toPosition(height), material) }
-    if (points.size > 2) LineNode(points.last().toPosition(height), points.first().toPosition(height), material)
+    points.zipWithNext().forEach { (a, b) -> ThickLineRenderer(a.toPosition(height), b.toPosition(height), material, material, ThickLineStyle(widthDp = 5f, glowWidthDp = 8f)) }
+    if (points.size > 2) ThickLineRenderer(points.last().toPosition(height), points.first().toPosition(height), material, material, ThickLineStyle(widthDp = 5f, glowWidthDp = 8f))
+}
+
+@Composable
+private fun NodeScope.MarkerShape(points: List<MarkerPlanePoint>, shape: MarkerTransformShape, material: MaterialInstance, height: Float) {
+    when (shape) {
+        MarkerTransformShape.Point -> {
+            points.forEach { RadiantPointRenderer(it.toPosition(height), material, material, material, RadiantPointStyle(isSelected = true, isDraggable = true)) }
+        }
+        MarkerTransformShape.Circle -> {
+            val center = points.firstOrNull() ?: MarkerPlanePoint(0f, 0f)
+            val edge = points.getOrNull(1) ?: MarkerPlanePoint(0.12f, 0f)
+            val radius = sqrt((center.x - edge.x) * (center.x - edge.x) + (center.y - edge.y) * (center.y - edge.y)).coerceAtLeast(0.02f)
+            val ring = (0..72).map { index ->
+                val angle = index * 2f * PI.toFloat() / 72f
+                MarkerPlanePoint(center.x + cos(angle) * radius, center.y + sin(angle) * radius)
+            }
+            ring.zipWithNext().forEach { (a, b) -> ThickLineRenderer(a.toPosition(height), b.toPosition(height), material, material, ThickLineStyle(widthDp = 4.5f, glowWidthDp = 7f)) }
+            RadiantPointRenderer(center.toPosition(height + 0.01f), material, material, material, RadiantPointStyle(centreRadius = 0.008f, haloRadius = 0.017f))
+        }
+        else -> MarkerPolygon(points, material, height)
+    }
 }
 
 @Composable
@@ -1370,7 +2001,20 @@ private fun NodeScope.MarkerTransformationMatrixGlyph(state: ArViewerUiState, ma
         LineNode(Position(x, height, baseZ), Position(x, height, baseZ + width), material)
     }
     val pulse = 0.012f + state.markerTransformProgress * 0.018f
-    CubeNode(Size(pulse, pulse, pulse), center = Position(baseX + width + 0.03f, height, baseZ + width), materialInstance = material)
+    RadiantPointRenderer(Position(baseX + width + 0.03f, height, baseZ + width), material, material, material, RadiantPointStyle(centreRadius = pulse * 0.42f, haloRadius = pulse))
+}
+
+@Composable
+private fun NodeScope.MarkerTransformCenterNode(state: ArViewerUiState, material: MaterialInstance) {
+    val center = when (state.markerTransformTool) {
+        MarkerTransformationTool.Rotation,
+        MarkerTransformationTool.Composite -> MarkerPlanePoint(state.markerRotationCenterX, state.markerRotationCenterY)
+        MarkerTransformationTool.Dilation -> MarkerPlanePoint(state.markerDilationCenterX, state.markerDilationCenterY)
+        else -> null
+    } ?: return
+    RadiantPointRenderer(center.toPosition(0.09f), material, material, material, RadiantPointStyle(isSelected = true))
+    ThickLineRenderer(MarkerPlanePoint(center.x - 0.035f, center.y).toPosition(0.09f), MarkerPlanePoint(center.x + 0.035f, center.y).toPosition(0.09f), material, material, ThickLineStyle(widthDp = 3f, glowWidthDp = 5f))
+    ThickLineRenderer(MarkerPlanePoint(center.x, center.y - 0.035f).toPosition(0.09f), MarkerPlanePoint(center.x, center.y + 0.035f).toPosition(0.09f), material, material, ThickLineStyle(widthDp = 3f, glowWidthDp = 5f))
 }
 
 private data class MarkerPlanePoint(val x: Float, val y: Float) {
@@ -1383,23 +2027,32 @@ private data class MarkerPlanePoint(val x: Float, val y: Float) {
 
     fun transformedBy(state: ArViewerUiState): MarkerPlanePoint = when (state.markerTransformTool) {
         MarkerTransformationTool.Translation -> MarkerPlanePoint(x + state.markerTranslationX, y + state.markerTranslationY)
-        MarkerTransformationTool.Rotation -> rotateBy(state.markerRotationDegrees * if (state.markerRotationClockwise) -1f else 1f)
+        MarkerTransformationTool.Rotation -> rotateAround(
+            MarkerPlanePoint(state.markerRotationCenterX, state.markerRotationCenterY),
+            state.markerRotationDegrees * if (state.markerRotationClockwise) -1f else 1f
+        )
         MarkerTransformationTool.Reflection -> reflectedBy(state.markerReflectionLine)
-        MarkerTransformationTool.Dilation -> MarkerPlanePoint(x * state.markerDilationScale, y * state.markerDilationScale)
+        MarkerTransformationTool.Dilation -> dilateFrom(MarkerPlanePoint(state.markerDilationCenterX, state.markerDilationCenterY), state.markerDilationScale)
         MarkerTransformationTool.HorizontalStretch -> MarkerPlanePoint(x * state.markerHorizontalStretch, y)
         MarkerTransformationTool.VerticalStretch -> MarkerPlanePoint(x, y * state.markerVerticalStretch)
         MarkerTransformationTool.Shear -> MarkerPlanePoint(x + state.markerShear * y, y)
-        MarkerTransformationTool.Composite -> rotateBy(state.markerRotationDegrees)
-            .let { MarkerPlanePoint(it.x * state.markerDilationScale, it.y * state.markerDilationScale) }
-            .let { MarkerPlanePoint(it.x + state.markerTranslationX, it.y + state.markerTranslationY) }
+        MarkerTransformationTool.Composite -> applyCompositeSequence(state)
     }
 
-    private fun rotateBy(degrees: Float): MarkerPlanePoint {
+    fun rotateBy(degrees: Float): MarkerPlanePoint {
         val radians = degrees * PI.toFloat() / 180f
         return MarkerPlanePoint(x * cos(radians) - y * sin(radians), x * sin(radians) + y * cos(radians))
     }
 
-    private fun reflectedBy(line: MarkerReflectionLine): MarkerPlanePoint = when (line) {
+    private fun rotateAround(center: MarkerPlanePoint, degrees: Float): MarkerPlanePoint {
+        val shifted = MarkerPlanePoint(x - center.x, y - center.y).rotateBy(degrees)
+        return MarkerPlanePoint(shifted.x + center.x, shifted.y + center.y)
+    }
+
+    private fun dilateFrom(center: MarkerPlanePoint, scale: Float): MarkerPlanePoint =
+        MarkerPlanePoint(center.x + (x - center.x) * scale, center.y + (y - center.y) * scale)
+
+    fun reflectedBy(line: MarkerReflectionLine): MarkerPlanePoint = when (line) {
         MarkerReflectionLine.XAxis -> MarkerPlanePoint(x, -y)
         MarkerReflectionLine.YAxis -> MarkerPlanePoint(-x, y)
         MarkerReflectionLine.YEqualsX -> MarkerPlanePoint(y, x)
@@ -1407,11 +2060,38 @@ private data class MarkerPlanePoint(val x: Float, val y: Float) {
         MarkerReflectionLine.UserLine -> reflectAcrossLine(angleRadians = atan2(0.5f, 1f))
     }
 
+    private fun applyCompositeSequence(state: ArViewerUiState): MarkerPlanePoint {
+        val steps = state.markerTransformationSequence.ifEmpty {
+            listOf(
+                MarkerTransformationStepState(MarkerTransformSequenceAction.Rotate90, "Rotate 90 deg"),
+                MarkerTransformationStepState(MarkerTransformSequenceAction.Translate32, "Translate (3, 2)"),
+                MarkerTransformationStepState(MarkerTransformSequenceAction.ReflectYAxis, "Reflect Y-axis")
+            )
+        }
+        return steps.fold(this) { point, step ->
+            when (step.action) {
+                MarkerTransformSequenceAction.Rotate90 -> point.rotateBy(90f)
+                MarkerTransformSequenceAction.Translate32 -> MarkerPlanePoint(point.x + 0.18f, point.y + 0.12f)
+                MarkerTransformSequenceAction.ReflectYAxis -> point.reflectedBy(MarkerReflectionLine.YAxis)
+            }
+        }
+    }
+
     private fun reflectAcrossLine(angleRadians: Float): MarkerPlanePoint {
         val rotated = rotateBy(-angleRadians * 180f / PI.toFloat())
         val reflected = MarkerPlanePoint(rotated.x, -rotated.y)
         return reflected.rotateBy(angleRadians * 180f / PI.toFloat())
     }
+}
+
+private fun markerTransformShapePoints(shape: MarkerTransformShape): List<MarkerPlanePoint> = when (shape) {
+    MarkerTransformShape.Point -> listOf(MarkerPlanePoint(-0.04f, 0.04f))
+    MarkerTransformShape.Segment -> listOf(MarkerPlanePoint(-0.16f, -0.08f), MarkerPlanePoint(0.16f, 0.08f))
+    MarkerTransformShape.Triangle -> listOf(MarkerPlanePoint(-0.13f, -0.1f), MarkerPlanePoint(0.13f, -0.08f), MarkerPlanePoint(-0.02f, 0.13f))
+    MarkerTransformShape.Square -> listOf(MarkerPlanePoint(-0.12f, -0.12f), MarkerPlanePoint(0.12f, -0.12f), MarkerPlanePoint(0.12f, 0.12f), MarkerPlanePoint(-0.12f, 0.12f))
+    MarkerTransformShape.Rectangle -> listOf(MarkerPlanePoint(-0.18f, -0.1f), MarkerPlanePoint(0.18f, -0.1f), MarkerPlanePoint(0.18f, 0.1f), MarkerPlanePoint(-0.18f, 0.1f))
+    MarkerTransformShape.Polygon -> listOf(MarkerPlanePoint(-0.15f, -0.08f), MarkerPlanePoint(-0.04f, -0.15f), MarkerPlanePoint(0.14f, -0.07f), MarkerPlanePoint(0.11f, 0.12f), MarkerPlanePoint(-0.1f, 0.14f))
+    MarkerTransformShape.Circle -> listOf(MarkerPlanePoint(0f, 0f), MarkerPlanePoint(0.13f, 0f))
 }
 
 private fun Int.floorMod(size: Int): Int = ((this % size) + size) % size
@@ -1732,16 +2412,109 @@ private fun NodeScope.SelectionHighlight(materialLoader: MaterialLoader) {
 }
 
 @Composable
+private fun NodeScope.RadiantPointRenderer(
+    center: Position,
+    materialInstance: MaterialInstance,
+    glowMaterialInstance: MaterialInstance,
+    haloMaterialInstance: MaterialInstance,
+    style: RadiantPointStyle = RadiantPointStyle()
+) {
+    val selectedBoost = if (style.isSelected) 1.28f else 1f
+    val draggableBoost = if (style.isDraggable) 1.16f else 1f
+    val lockedScale = if (style.isLocked) 0.92f else 1f
+    val invalidBoost = if (style.isInvalid) 1.18f else 1f
+    val centre = style.centreRadius * selectedBoost * draggableBoost * lockedScale
+    val halo = style.haloRadius * selectedBoost * draggableBoost * invalidBoost
+    SphereNode(
+        radius = halo * style.glowIntensity.coerceIn(0.6f, 1.4f),
+        center = center,
+        stacks = 16,
+        slices = 24,
+        materialInstance = glowMaterialInstance
+    )
+    SphereNode(
+        radius = halo * 0.74f,
+        center = center.copy(y = center.y + 0.0008f),
+        stacks = 12,
+        slices = 20,
+        materialInstance = haloMaterialInstance
+    )
+    SphereNode(
+        radius = centre,
+        center = center.copy(y = center.y + 0.0016f),
+        stacks = 16,
+        slices = 24,
+        materialInstance = materialInstance
+    )
+    if (style.isSelected || style.isDraggable || style.isInvalid) {
+        SphereNode(
+            radius = halo * 1.18f,
+            center = center.copy(y = center.y + 0.0024f),
+            stacks = 10,
+            slices = 18,
+            materialInstance = haloMaterialInstance
+        )
+    }
+}
+
+@Composable
+private fun NodeScope.ThickLineRenderer(
+    start: Position,
+    end: Position,
+    materialInstance: MaterialInstance,
+    glowMaterialInstance: MaterialInstance,
+    style: ThickLineStyle = ThickLineStyle()
+) {
+    val dx = end.x - start.x
+    val dy = end.y - start.y
+    val dz = end.z - start.z
+    val planarLength = sqrt(dx * dx + dz * dz)
+    val lineWidth = style.widthDp.dpToMarkerMeters() * if (style.isSelected) 1.55f else 1f
+    val glowWidth = style.glowWidthDp.dpToMarkerMeters() * if (style.isSelected) 1.35f else 1f
+    if (planarLength > 0.001f && abs(dy) < 0.04f) {
+        val center = Position((start.x + end.x) / 2f, max(start.y, end.y), (start.z + end.z) / 2f)
+        val yaw = Math.toDegrees(atan2(-dz.toDouble(), dx.toDouble())).toFloat()
+        if (!style.isDashed) {
+            CubeNode(
+                size = Size(planarLength, 0.004f, glowWidth),
+                center = center.copy(y = center.y - 0.0008f),
+                materialInstance = glowMaterialInstance,
+                rotation = Rotation(y = yaw)
+            )
+            CubeNode(
+                size = Size(planarLength, 0.006f, lineWidth),
+                center = center.copy(y = center.y + 0.0012f),
+                materialInstance = materialInstance,
+                rotation = Rotation(y = yaw)
+            )
+        } else {
+            val segments = max(3, (planarLength / 0.035f).toInt())
+            (0 until segments step 2).forEach { index ->
+                val t0 = index / segments.toFloat()
+                val t1 = ((index + 1).coerceAtMost(segments)) / segments.toFloat()
+                val a = start.lerpTo(end, t0)
+                val b = start.lerpTo(end, t1)
+                ThickLineRenderer(a, b, materialInstance, glowMaterialInstance, style.copy(isDashed = false, glowWidthDp = style.glowWidthDp * 0.75f))
+            }
+        }
+    } else {
+        LineNode(start, end, glowMaterialInstance)
+        LineNode(start.copy(y = start.y + 0.001f), end.copy(y = end.y + 0.001f), materialInstance)
+    }
+}
+
+@Composable
 private fun NodeScope.GestureHandleNodes(materialLoader: MaterialLoader) {
     val rotate = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
     val scale = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF3DFF9F)) }
     val lift = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF42A5F5)) }
-    CubeNode(Size(0.026f, 0.026f, 0.026f), center = Position(0.22f, 0.12f, 0f), materialInstance = rotate)
-    CubeNode(Size(0.026f, 0.026f, 0.026f), center = Position(0f, 0.28f, 0f), materialInstance = lift)
-    CubeNode(Size(0.026f, 0.026f, 0.026f), center = Position(-0.22f, 0.12f, 0f), materialInstance = scale)
-    LineNode(Position(0f, 0.12f, 0f), Position(0.22f, 0.12f, 0f), rotate)
-    LineNode(Position(0f, 0.12f, 0f), Position(0f, 0.28f, 0f), lift)
-    LineNode(Position(0f, 0.12f, 0f), Position(-0.22f, 0.12f, 0f), scale)
+    val glow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color.White.copy(alpha = 0.22f)) }
+    RadiantPointRenderer(Position(0.22f, 0.12f, 0f), rotate, glow, rotate, RadiantPointStyle(isDraggable = true))
+    RadiantPointRenderer(Position(0f, 0.28f, 0f), lift, glow, lift, RadiantPointStyle(isDraggable = true))
+    RadiantPointRenderer(Position(-0.22f, 0.12f, 0f), scale, glow, scale, RadiantPointStyle(isDraggable = true))
+    ThickLineRenderer(Position(0f, 0.12f, 0f), Position(0.22f, 0.12f, 0f), rotate, glow, ThickLineStyle(widthDp = 4f, glowWidthDp = 8f))
+    ThickLineRenderer(Position(0f, 0.12f, 0f), Position(0f, 0.28f, 0f), lift, glow, ThickLineStyle(widthDp = 4f, glowWidthDp = 8f))
+    ThickLineRenderer(Position(0f, 0.12f, 0f), Position(-0.22f, 0.12f, 0f), scale, glow, ThickLineStyle(widthDp = 4f, glowWidthDp = 8f))
 }
 
 @Composable
@@ -1759,19 +2532,31 @@ private fun NodeScope.CompareGhostNode(type: MathObjectType, materialLoader: Mat
 
 @Composable
 private fun NodeScope.ConstructionGeometryNodes(state: ArViewerUiState, materialLoader: MaterialLoader) {
-    if (MathArFeature.MultiObjectConstraints !in state.enabledMathArFeatures && state.resolvedConstructions.isEmpty()) return
+    if (MathArFeature.MultiObjectConstraints !in state.enabledMathArFeatures && state.resolvedConstructions.isEmpty() && state.marker2dDraftPoints.isEmpty()) return
     val pointMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFF176)) }
     val lineMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF6EDBFF)) }
     val constraintMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFF8A65)) }
-    state.constructionGeometry.points.forEach { point ->
-        CubeNode(
-            size = Size(0.018f, 0.018f, 0.018f),
+    val selectedMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFA45CFF)) }
+    val draftMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFF58F2C2)) }
+    val pointGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x66FFF176)) }
+    val lineGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x526EDBFF)) }
+    val selectedGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x77A45CFF)) }
+    val constraintGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x66FF8A65)) }
+    if (state.marker2dShowVertices) state.constructionGeometry.points.forEach { point ->
+        RadiantPointRenderer(
             center = point.position.toPosition().copy(y = point.position.y.toFloat() + 0.024f),
-            materialInstance = pointMaterial
+            materialInstance = pointMaterial,
+            glowMaterialInstance = pointGlow,
+            haloMaterialInstance = pointMaterial,
+            style = RadiantPointStyle(isDraggable = true)
         )
     }
-    state.resolvedConstructions.filter { it.visible }.forEach { construction ->
-        val material = if (construction.kind in setOf(ConstructionObjectKind.Parallel, ConstructionObjectKind.Perpendicular)) constraintMaterial else lineMaterial
+    if (state.marker2dShowConstructionLines) state.resolvedConstructions.filter { it.visible }.forEach { construction ->
+        val material = when {
+            construction.id == state.marker2dSelectedObjectId -> selectedMaterial
+            construction.kind in setOf(ConstructionObjectKind.Parallel, ConstructionObjectKind.Perpendicular) -> constraintMaterial
+            else -> lineMaterial
+        }
         when (construction.kind) {
             ConstructionObjectKind.Line,
             ConstructionObjectKind.Segment,
@@ -1780,7 +2565,13 @@ private fun NodeScope.ConstructionGeometryNodes(state: ArViewerUiState, material
             ConstructionObjectKind.Parallel,
             ConstructionObjectKind.Perpendicular -> {
                 if (construction.points.size >= 2) {
-                    LineNode(construction.points[0].toPosition(), construction.points[1].toPosition(), material)
+                    ThickLineRenderer(
+                        construction.points[0].toPosition(),
+                        construction.points[1].toPosition(),
+                        material,
+                        if (construction.id == state.marker2dSelectedObjectId) selectedGlow else lineGlow,
+                        ThickLineStyle(isSelected = construction.id == state.marker2dSelectedObjectId)
+                    )
                     if (construction.kind in setOf(ConstructionObjectKind.Vector, ConstructionObjectKind.Ray)) {
                         VectorHead(construction.points[0].toPosition(), construction.points[1].toPosition(), material)
                     }
@@ -1788,8 +2579,10 @@ private fun NodeScope.ConstructionGeometryNodes(state: ArViewerUiState, material
             }
             ConstructionObjectKind.Plane,
             ConstructionObjectKind.Polygon -> {
-                construction.points.zipWithNext().forEach { (a, b) -> LineNode(a.toPosition(), b.toPosition(), material) }
-                if (construction.points.size > 2) LineNode(construction.points.last().toPosition(), construction.points.first().toPosition(), material)
+                construction.points.zipWithNext().forEach { (a, b) ->
+                    ThickLineRenderer(a.toPosition(), b.toPosition(), material, if (construction.id == state.marker2dSelectedObjectId) selectedGlow else lineGlow, ThickLineStyle(isSelected = construction.id == state.marker2dSelectedObjectId))
+                }
+                if (construction.points.size > 2) ThickLineRenderer(construction.points.last().toPosition(), construction.points.first().toPosition(), material, if (construction.id == state.marker2dSelectedObjectId) selectedGlow else lineGlow, ThickLineStyle(isSelected = construction.id == state.marker2dSelectedObjectId))
             }
             ConstructionObjectKind.Circle -> {
                 if (construction.points.size >= 2) {
@@ -1800,17 +2593,37 @@ private fun NodeScope.ConstructionGeometryNodes(state: ArViewerUiState, material
                         val angle = index * (2f * PI.toFloat() / 48f)
                         Position(center.x.toFloat() + cos(angle) * radius, center.y.toFloat() + 0.018f, center.z.toFloat() + sin(angle) * radius)
                     }
-                    ring.zipWithNext().forEach { (a, b) -> LineNode(a, b, material) }
+                    ring.zipWithNext().forEach { (a, b) -> ThickLineRenderer(a, b, material, lineGlow, ThickLineStyle(widthDp = 4.8f, glowWidthDp = 8f)) }
                 }
             }
             ConstructionObjectKind.Midpoint,
             ConstructionObjectKind.Point,
             ConstructionObjectKind.Intersection -> {
                 construction.points.forEach { point ->
-                    CubeNode(Size(0.022f, 0.022f, 0.022f), center = point.toPosition().copy(y = point.y.toFloat() + 0.028f), materialInstance = constraintMaterial)
+                    RadiantPointRenderer(
+                        center = point.toPosition().copy(y = point.y.toFloat() + 0.028f),
+                        materialInstance = constraintMaterial,
+                        glowMaterialInstance = constraintGlow,
+                        haloMaterialInstance = constraintMaterial,
+                        style = RadiantPointStyle(isSelected = construction.id == state.marker2dSelectedObjectId)
+                    )
                 }
             }
         }
+    }
+    val draft = state.marker2dDraftPoints.map { Vector3Value(it.x.toDouble(), 0.0, it.y.toDouble()).toPosition() }
+    draft.forEach { point ->
+        RadiantPointRenderer(
+            center = point.copy(y = point.y + 0.034f),
+            materialInstance = draftMaterial,
+            glowMaterialInstance = pointGlow,
+            haloMaterialInstance = draftMaterial,
+            style = RadiantPointStyle(isSelected = true, isDraggable = true)
+        )
+    }
+    draft.zipWithNext().forEach { (a, b) -> ThickLineRenderer(a, b, draftMaterial, pointGlow, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f, isDashed = true)) }
+    if (state.marker2dActiveTool in setOf(Marker2dShapeTool.Polygon, Marker2dShapeTool.Triangle, Marker2dShapeTool.Square, Marker2dShapeTool.Rectangle, Marker2dShapeTool.RegularPolygon) && draft.size > 2) {
+        ThickLineRenderer(draft.last(), draft.first(), draftMaterial, pointGlow, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f, isDashed = true))
     }
 }
 
@@ -1824,23 +2637,32 @@ private fun NodeScope.VectorHead(start: Position, end: Position, material: Mater
     val size = 0.035f
     val left = Position(end.x - ux * size - uz * size * 0.45f, end.y, end.z - uz * size + ux * size * 0.45f)
     val right = Position(end.x - ux * size + uz * size * 0.45f, end.y, end.z - uz * size - ux * size * 0.45f)
-    LineNode(end, left, material)
-    LineNode(end, right, material)
+    ThickLineRenderer(end, left, material, material, ThickLineStyle(widthDp = 3.5f, glowWidthDp = 6f))
+    ThickLineRenderer(end, right, material, material, ThickLineStyle(widthDp = 3.5f, glowWidthDp = 6f))
 }
 
 private fun Vector3Value.toPosition(): Position = Position(x.toFloat(), y.toFloat() + 0.018f, z.toFloat())
+
+private fun Float.dpToMarkerMeters(): Float = this * 0.0017f
+
+private fun Position.lerpTo(other: Position, t: Float): Position =
+    Position(
+        x = x + (other.x - x) * t,
+        y = y + (other.y - y) * t,
+        z = z + (other.z - z) * t
+    )
 
 @Composable
 private fun NodeScope.CoordinatePlaneNode(lineMaterial: com.google.android.filament.MaterialInstance, pointMaterial: com.google.android.filament.MaterialInstance) {
     val range = -5..5
     range.forEach { i ->
         val p = i * 0.04f
-        LineNode(Position(-0.22f, 0.002f, p), Position(0.22f, 0.002f, p), lineMaterial)
-        LineNode(Position(p, 0.002f, -0.22f), Position(p, 0.002f, 0.22f), lineMaterial)
+        ThickLineRenderer(Position(-0.22f, 0.002f, p), Position(0.22f, 0.002f, p), lineMaterial, lineMaterial, ThickLineStyle(widthDp = 1.2f, glowWidthDp = 2f))
+        ThickLineRenderer(Position(p, 0.002f, -0.22f), Position(p, 0.002f, 0.22f), lineMaterial, lineMaterial, ThickLineStyle(widthDp = 1.2f, glowWidthDp = 2f))
     }
-    LineNode(Position(-0.25f, 0.006f, 0f), Position(0.25f, 0.006f, 0f), pointMaterial)
-    LineNode(Position(0f, 0.006f, -0.25f), Position(0f, 0.006f, 0.25f), pointMaterial)
-    CubeNode(Size(0.018f, 0.018f, 0.018f), center = Position(0.08f, 0.018f, 0.08f), materialInstance = pointMaterial)
+    ThickLineRenderer(Position(-0.25f, 0.006f, 0f), Position(0.25f, 0.006f, 0f), pointMaterial, pointMaterial, ThickLineStyle(widthDp = 5f, glowWidthDp = 8f))
+    ThickLineRenderer(Position(0f, 0.006f, -0.25f), Position(0f, 0.006f, 0.25f), pointMaterial, pointMaterial, ThickLineStyle(widthDp = 5f, glowWidthDp = 8f))
+    RadiantPointRenderer(Position(0.08f, 0.018f, 0.08f), pointMaterial, pointMaterial, pointMaterial)
 }
 
 @Composable
@@ -1883,10 +2705,12 @@ private fun NodeScope.SineCurveNode(
     }
     if (MathArFeature.RootVisualizer in state.enabledMathArFeatures) {
         state.arGraphAnalysis.highlightedPoints.forEach { point ->
-            CubeNode(
-                Size(0.018f, 0.018f, 0.018f),
-                center = Position(graphX(state, point.x.toFloat()), 0.028f, point.y.toFloat().coerceIn(-1.6f, 1.6f) * 0.08f),
-                materialInstance = accent
+            RadiantPointRenderer(
+                Position(graphX(state, point.x.toFloat()), 0.028f, point.y.toFloat().coerceIn(-1.6f, 1.6f) * 0.08f),
+                accent,
+                accent,
+                accent,
+                RadiantPointStyle(isSelected = true)
             )
         }
     }
@@ -1913,9 +2737,9 @@ private fun NodeScope.SineCurveNode(
         val z = yValue * 0.08f
         val slope = tangent?.tangentSlope?.toFloat()?.coerceIn(-8f, 8f) ?: derivativeValue(state, xValue, phase)
         val normalSlope = tangent?.normalSlope?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(-8f, 8f) ?: -1f / slope.coerceAwayFromZero()
-        CubeNode(Size(0.028f, 0.028f, 0.028f), center = Position(x, 0.03f, z), materialInstance = accent)
-        LineNode(Position(x - 0.08f, 0.026f, z - slope * 0.08f), Position(x + 0.08f, 0.026f, z + slope * 0.08f), accent)
-        LineNode(Position(x - 0.045f, 0.026f, z - normalSlope * 0.045f), Position(x + 0.045f, 0.026f, z + normalSlope * 0.045f), lineMaterial)
+        RadiantPointRenderer(Position(x, 0.03f, z), accent, accent, accent, RadiantPointStyle(isSelected = true, isDraggable = true))
+        ThickLineRenderer(Position(x - 0.08f, 0.026f, z - slope * 0.08f), Position(x + 0.08f, 0.026f, z + slope * 0.08f), accent, accent, ThickLineStyle(widthDp = 4.5f, glowWidthDp = 7f))
+        ThickLineRenderer(Position(x - 0.045f, 0.026f, z - normalSlope * 0.045f), Position(x + 0.045f, 0.026f, z + normalSlope * 0.045f), lineMaterial, lineMaterial, ThickLineStyle(widthDp = 3.5f, glowWidthDp = 5f))
     }
 }
 
@@ -1965,15 +2789,15 @@ private fun NodeScope.calibrationMarkers(
 ) {
     val calibration = state.paperGraphCalibration
     if (calibration.originLocked) {
-        CubeNode(Size(0.018f, 0.018f, 0.018f), center = Position(0f, 0.025f, 0f), materialInstance = accent)
+        RadiantPointRenderer(Position(0f, 0.025f, 0f), accent, accent, accent, RadiantPointStyle(isSelected = true))
     }
     if (calibration.xAxisLocked) {
-        CubeNode(Size(0.016f, 0.016f, 0.016f), center = Position(0.12f, 0.025f, 0f), materialInstance = accent)
-        LineNode(Position(0f, 0.018f, 0f), Position(0.12f, 0.018f, 0f), accent)
+        RadiantPointRenderer(Position(0.12f, 0.025f, 0f), accent, accent, accent)
+        ThickLineRenderer(Position(0f, 0.018f, 0f), Position(0.12f, 0.018f, 0f), accent, accent, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f))
     }
     if (calibration.yAxisLocked) {
-        CubeNode(Size(0.016f, 0.016f, 0.016f), center = Position(0f, 0.025f, 0.09f), materialInstance = accent)
-        LineNode(Position(0f, 0.018f, 0f), Position(0f, 0.018f, 0.09f), accent)
+        RadiantPointRenderer(Position(0f, 0.025f, 0.09f), accent, accent, accent)
+        ThickLineRenderer(Position(0f, 0.018f, 0f), Position(0f, 0.018f, 0.09f), accent, accent, ThickLineStyle(widthDp = 4f, glowWidthDp = 7f))
     }
 }
 
@@ -2105,7 +2929,7 @@ private fun NodeScope.FunctionTangentPlaneNode(
             LineNode(tangentPlanePoint(state, x0, f0, slope, a, z), tangentPlanePoint(state, x0, f0, slope, b, z), accent)
         }
     }
-    CubeNode(Size(0.022f, 0.022f, 0.022f), center = Position(graphX(state, x0), f0, 0f), materialInstance = accent)
+    RadiantPointRenderer(Position(graphX(state, x0), f0, 0f), accent, accent, accent, RadiantPointStyle(isSelected = true))
 }
 
 @Composable
@@ -2198,6 +3022,271 @@ private fun graphSegmentMaterial(
     val animatedShift = if (state.graphAnimationEnabled) state.graphAnimationProgress * 0.18f else 0f
     val paletteIndex = (((normalized + animatedShift).coerceIn(0f, 1f)) * (palette.lastIndex)).toInt().coerceIn(0, palette.lastIndex)
     return palette.getOrElse(paletteIndex) { palette.first() }
+}
+
+@Composable
+private fun NodeScope.MarkerCoordinateWorkspaceNode(materialLoader: MaterialLoader, state: ArViewerUiState) {
+    val axis = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color.White.copy(alpha = 0.88f)) }
+    val gridMinor = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathCyan.copy(alpha = 0.26f)) }
+    val gridMajor = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathCyan.copy(alpha = 0.46f)) }
+    val pointMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFF176)) }
+    val selectedMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathViolet) }
+    val lineMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathMint) }
+    val helperMaterial = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0xFFFFC857)) }
+    val pointGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x66FFF176)) }
+    val selectedGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathViolet.copy(alpha = 0.42f)) }
+    val lineGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(arMathMint.copy(alpha = 0.28f)) }
+    val helperGlow = remember(materialLoader) { materialLoader.createUnlitColorInstance(Color(0x66FFC857)) }
+    MarkerCoordinateGrid(axis, gridMinor, gridMajor)
+    val pointMap = state.markerCoordinatePoints.associateBy { it.id }
+    state.markerCoordinateShapes.filter { it.visible }.forEach { shape ->
+        val points = shape.pointIds.mapNotNull { pointMap[it] }
+        MarkerCoordinateShapeNode(
+            shape,
+            points,
+            if (shape.id == state.markerCoordinateSelectedShapeId) selectedMaterial else lineMaterial,
+            if (shape.id == state.markerCoordinateSelectedShapeId) selectedGlow else lineGlow,
+            shape.id == state.markerCoordinateSelectedShapeId
+        )
+    }
+    val selected = state.markerCoordinateSelectedPointIds.mapNotNull { pointMap[it] }
+    if (state.markerCoordinateShowSlopeTriangle && selected.size >= 2) {
+        val a = selected[selected.size - 2]
+        val b = selected.last()
+        val corner = MarkerCoordinatePointState("corner", "", b.x, a.y)
+        ThickLineRenderer(a.coordPosition(0.035f), corner.coordPosition(0.035f), helperMaterial, helperGlow, ThickLineStyle(widthDp = 3f, glowWidthDp = 5f, isDashed = true))
+        ThickLineRenderer(corner.coordPosition(0.035f), b.coordPosition(0.035f), helperMaterial, helperGlow, ThickLineStyle(widthDp = 3f, glowWidthDp = 5f, isDashed = true))
+        RadiantPointRenderer(corner.coordPosition(0.045f), helperMaterial, helperGlow, helperMaterial, RadiantPointStyle(centreRadius = 0.008f, haloRadius = 0.018f))
+        val intercepts = coordinateLineAnalysis(a, b)
+        intercepts.xIntercept?.let { RadiantPointRenderer(MarkerCoordinatePointState("x", "", it, 0f).coordPosition(0.045f), helperMaterial, helperGlow, helperMaterial, RadiantPointStyle(centreRadius = 0.008f, haloRadius = 0.018f)) }
+        intercepts.yIntercept?.let { RadiantPointRenderer(MarkerCoordinatePointState("y", "", 0f, it).coordPosition(0.045f), helperMaterial, helperGlow, helperMaterial, RadiantPointStyle(centreRadius = 0.008f, haloRadius = 0.018f)) }
+    }
+    state.markerCoordinatePoints.forEach { point ->
+        val selectedPoint = point.id in state.markerCoordinateSelectedPointIds
+        RadiantPointRenderer(
+            center = point.coordPosition(0.055f),
+            materialInstance = if (selectedPoint) selectedMaterial else pointMaterial,
+            glowMaterialInstance = if (selectedPoint) selectedGlow else pointGlow,
+            haloMaterialInstance = if (selectedPoint) selectedMaterial else pointMaterial,
+            style = RadiantPointStyle(isSelected = selectedPoint, isDraggable = selectedPoint)
+        )
+    }
+}
+
+@Composable
+private fun NodeScope.MarkerCoordinateGrid(axis: MaterialInstance, gridMinor: MaterialInstance, gridMajor: MaterialInstance) {
+    (-8..8).forEach { i ->
+        val p = i * MARKER_COORDINATE_UNIT_UI
+        val material = if (i % 2 == 0) gridMajor else gridMinor
+        ThickLineRenderer(Position(-8 * MARKER_COORDINATE_UNIT_UI, 0.014f, p), Position(8 * MARKER_COORDINATE_UNIT_UI, 0.014f, p), material, material, ThickLineStyle(widthDp = if (i % 2 == 0) 2.2f else 1.1f, glowWidthDp = if (i % 2 == 0) 3.2f else 1.6f, opacity = 0.55f))
+        ThickLineRenderer(Position(p, 0.014f, -8 * MARKER_COORDINATE_UNIT_UI), Position(p, 0.014f, 8 * MARKER_COORDINATE_UNIT_UI), material, material, ThickLineStyle(widthDp = if (i % 2 == 0) 2.2f else 1.1f, glowWidthDp = if (i % 2 == 0) 3.2f else 1.6f, opacity = 0.55f))
+    }
+    ThickLineRenderer(Position(-0.36f, 0.02f, 0f), Position(0.36f, 0.02f, 0f), axis, axis, ThickLineStyle(widthDp = 5.5f, glowWidthDp = 8f))
+    ThickLineRenderer(Position(0f, 0.02f, -0.36f), Position(0f, 0.02f, 0.36f), axis, axis, ThickLineStyle(widthDp = 5.5f, glowWidthDp = 8f))
+}
+
+@Composable
+private fun NodeScope.MarkerCoordinateShapeNode(shape: MarkerCoordinateShapeState, points: List<MarkerCoordinatePointState>, material: MaterialInstance, glow: MaterialInstance, selected: Boolean) {
+    when (shape.kind) {
+        MarkerCoordinateShapeKind.Line,
+        MarkerCoordinateShapeKind.Parallel,
+        MarkerCoordinateShapeKind.Perpendicular -> {
+            if (points.size >= 2) {
+                val (start, end) = extendedCoordinateLine(points[0], points[1])
+                ThickLineRenderer(start.coordPosition(0.032f), end.coordPosition(0.032f), material, glow, ThickLineStyle(widthDp = 5f, glowWidthDp = 9f, isSelected = selected))
+            }
+        }
+        MarkerCoordinateShapeKind.Segment -> if (points.size >= 2) ThickLineRenderer(points[0].coordPosition(0.032f), points[1].coordPosition(0.032f), material, glow, ThickLineStyle(widthDp = 5f, glowWidthDp = 9f, isSelected = selected))
+        MarkerCoordinateShapeKind.Triangle,
+        MarkerCoordinateShapeKind.Polygon -> {
+            points.zipWithNext().forEach { (a, b) -> ThickLineRenderer(a.coordPosition(0.032f), b.coordPosition(0.032f), material, glow, ThickLineStyle(widthDp = 5f, glowWidthDp = 9f, isSelected = selected)) }
+            if (points.size > 2) ThickLineRenderer(points.last().coordPosition(0.032f), points.first().coordPosition(0.032f), material, glow, ThickLineStyle(widthDp = 5f, glowWidthDp = 9f, isSelected = selected))
+        }
+    }
+}
+
+private const val MARKER_COORDINATE_UNIT_UI = 0.04f
+
+private fun MarkerCoordinatePointState.coordPosition(height: Float = 0.03f): Position =
+    Position(x * MARKER_COORDINATE_UNIT_UI, height, y * MARKER_COORDINATE_UNIT_UI)
+
+private fun extendedCoordinateLine(a: MarkerCoordinatePointState, b: MarkerCoordinatePointState): Pair<MarkerCoordinatePointState, MarkerCoordinatePointState> {
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    val length = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(0.001f)
+    val ux = dx / length
+    val uy = dy / length
+    return MarkerCoordinatePointState("l1", "", a.x - ux * 9f, a.y - uy * 9f) to MarkerCoordinatePointState("l2", "", a.x + ux * 9f, a.y + uy * 9f)
+}
+
+private data class CoordinateLineAnalysis(val slope: Float?, val yIntercept: Float?, val xIntercept: Float?, val equation: String)
+
+private fun coordinateLineAnalysis(a: MarkerCoordinatePointState, b: MarkerCoordinatePointState): CoordinateLineAnalysis {
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    if (abs(dx) < 1e-4f) {
+        return CoordinateLineAnalysis(null, null, a.x, "x = ${a.x.coordinateText(false)}")
+    }
+    val slope = dy / dx
+    val intercept = a.y - slope * a.x
+    val xIntercept = if (abs(slope) < 1e-4f) null else -intercept / slope
+    val sign = if (intercept >= 0f) "+" else "-"
+    return CoordinateLineAnalysis(slope, intercept, xIntercept, "y = ${slope.coordinateText(false)}x $sign ${abs(intercept).coordinateText(false)}")
+}
+
+@Composable
+private fun NodeScope.SphereWire(edge: MaterialInstance, radius: Float) {
+    CircleLines(radius, radius, edge, y = radius)
+    (0..24).forEach { i ->
+        val a = i * (2f * PI.toFloat() / 24f)
+        LineNode(Position(cos(a) * radius, radius, sin(a) * radius), Position(cos(a) * radius * 0.35f, radius * 2f, sin(a) * radius * 0.35f), edge)
+        LineNode(Position(cos(a) * radius, radius, sin(a) * radius), Position(cos(a) * radius * 0.35f, 0f, sin(a) * radius * 0.35f), edge)
+    }
+    CircleLines(radius * 0.7f, radius * 0.7f, edge, y = radius * 1.45f)
+    CircleLines(radius * 0.7f, radius * 0.7f, edge, y = radius * 0.55f)
+}
+
+@Composable
+private fun NodeScope.HemisphereWire(edge: MaterialInstance, radius: Float) {
+    CircleLines(radius, radius, edge, y = 0f)
+    (0..12).forEach { i ->
+        val a = i * (2f * PI.toFloat() / 12f)
+        LineNode(Position(cos(a) * radius, 0f, sin(a) * radius), Position(0f, radius, 0f), edge)
+    }
+    CircleLines(radius * 0.7f, radius * 0.7f, edge, y = radius * 0.5f)
+}
+
+@Composable
+private fun NodeScope.CylinderWire(edge: MaterialInstance, radius: Float, height: Float) {
+    CircleLines(radius, radius, edge, y = 0f)
+    CircleLines(radius, radius, edge, y = height)
+    (0 until 16).forEach { i ->
+        val a = i * (2f * PI.toFloat() / 16f)
+        LineNode(Position(cos(a) * radius, 0f, sin(a) * radius), Position(cos(a) * radius, height, sin(a) * radius), edge)
+    }
+}
+
+@Composable
+private fun NodeScope.ConeWire(edge: MaterialInstance, radius: Float, height: Float) {
+    CircleLines(radius, radius, edge, y = 0f)
+    (0 until 16 step 2).forEach { i ->
+        val a = i * (2f * PI.toFloat() / 16f)
+        LineNode(Position(cos(a) * radius, 0f, sin(a) * radius), Position(0f, height, 0f), edge)
+    }
+}
+
+@Composable
+private fun NodeScope.PyramidWire(edge: MaterialInstance, halfX: Float, halfZ: Float, height: Float, exploded: Boolean) {
+    val explode = if (exploded) 0.035f else 0f
+    val corners = listOf(
+        Position(-halfX - explode, 0f, -halfZ - explode),
+        Position(halfX + explode, 0f, -halfZ - explode),
+        Position(halfX + explode, 0f, halfZ + explode),
+        Position(-halfX - explode, 0f, halfZ + explode)
+    )
+    corners.zipWithNext().forEach { (a, b) -> LineNode(a, b, edge) }
+    LineNode(corners.last(), corners.first(), edge)
+    val apex = Position(0f, height + explode, 0f)
+    corners.forEach { LineNode(it, apex, edge) }
+}
+
+@Composable
+private fun NodeScope.TriangularPrismWire(edge: MaterialInstance, width: Float, height: Float, depth: Float) {
+    val left = -depth / 2f
+    val right = depth / 2f
+    val triA = listOf(Position(-width / 2f, 0f, left), Position(width / 2f, 0f, left), Position(0f, height, left))
+    val triB = listOf(Position(-width / 2f, 0f, right), Position(width / 2f, 0f, right), Position(0f, height, right))
+    triA.zipWithNext().forEach { (a, b) -> LineNode(a, b, edge) }
+    LineNode(triA.last(), triA.first(), edge)
+    triB.zipWithNext().forEach { (a, b) -> LineNode(a, b, edge) }
+    LineNode(triB.last(), triB.first(), edge)
+    triA.zip(triB).forEach { (a, b) -> LineNode(a, b, edge) }
+}
+
+@Composable
+private fun NodeScope.TetrahedronWire(edge: MaterialInstance, side: Float) {
+    val h = side * 0.82f
+    val a = Position(-side / 2f, 0f, -side / 3f)
+    val b = Position(side / 2f, 0f, -side / 3f)
+    val c = Position(0f, 0f, side / 2f)
+    val d = Position(0f, h, 0f)
+    listOf(a to b, b to c, c to a, a to d, b to d, c to d).forEach { (p, q) -> LineNode(p, q, edge) }
+}
+
+@Composable
+private fun NodeScope.TorusWire(edge: MaterialInstance, majorRadius: Float, tubeRadius: Float) {
+    CircleLines(majorRadius, majorRadius, edge, y = tubeRadius)
+    CircleLines(majorRadius + tubeRadius, majorRadius + tubeRadius, edge, y = tubeRadius)
+    CircleLines((majorRadius - tubeRadius).coerceAtLeast(0.02f), (majorRadius - tubeRadius).coerceAtLeast(0.02f), edge, y = tubeRadius)
+    (0 until 12).forEach { i ->
+        val a = i * (2f * PI.toFloat() / 12f)
+        val cx = cos(a) * majorRadius
+        val cz = sin(a) * majorRadius
+        LineNode(Position(cx - cos(a) * tubeRadius, tubeRadius, cz - sin(a) * tubeRadius), Position(cx + cos(a) * tubeRadius, tubeRadius, cz + sin(a) * tubeRadius), edge)
+    }
+}
+
+@Composable
+private fun NodeScope.FrustumWire(edge: MaterialInstance, bottomRadius: Float, topRadius: Float, height: Float) {
+    CircleLines(bottomRadius, bottomRadius, edge, y = 0f)
+    CircleLines(topRadius, topRadius, edge, y = height)
+    (0 until 16 step 2).forEach { i ->
+        val a = i * (2f * PI.toFloat() / 16f)
+        LineNode(Position(cos(a) * bottomRadius, 0f, sin(a) * bottomRadius), Position(cos(a) * topRadius, height, sin(a) * topRadius), edge)
+    }
+}
+
+@Composable
+private fun NodeScope.Marker3dVertexNodes(solid: Marker3dSolidState, dimensions: MarkerSolidDimensions, material: MaterialInstance) {
+    val points = when (solid.tool) {
+        Marker3dShapeTool.Sphere,
+        Marker3dShapeTool.Hemisphere,
+        Marker3dShapeTool.Cylinder,
+        Marker3dShapeTool.Cone,
+        Marker3dShapeTool.Torus,
+        Marker3dShapeTool.Frustum -> listOf(
+            Position(-dimensions.width / 2f, 0f, 0f),
+            Position(dimensions.width / 2f, 0f, 0f),
+            Position(0f, dimensions.height, 0f)
+        )
+        else -> listOf(
+            Position(-dimensions.width / 2f, 0f, -dimensions.depth / 2f),
+            Position(dimensions.width / 2f, 0f, -dimensions.depth / 2f),
+            Position(dimensions.width / 2f, 0f, dimensions.depth / 2f),
+            Position(-dimensions.width / 2f, 0f, dimensions.depth / 2f),
+            Position(0f, dimensions.height, 0f)
+        )
+    }
+    points.forEach {
+        RadiantPointRenderer(
+            center = it,
+            materialInstance = material,
+            glowMaterialInstance = material,
+            haloMaterialInstance = material,
+            style = RadiantPointStyle(centreRadius = 0.009f, haloRadius = 0.021f, isDraggable = true)
+        )
+    }
+}
+
+@Composable
+private fun NodeScope.Marker3dNetNode(solid: Marker3dSolidState, edge: MaterialInstance, accent: MaterialInstance) {
+    Node(position = Position(0.28f, 0.012f, 0.2f), scale = Scale(0.55f)) {
+        when (solid.tool) {
+            Marker3dShapeTool.Cylinder,
+            Marker3dShapeTool.Cone,
+            Marker3dShapeTool.Sphere,
+            Marker3dShapeTool.Hemisphere,
+            Marker3dShapeTool.Torus,
+            Marker3dShapeTool.Frustum -> {
+                CircleLines(0.08f, 0.08f, edge, y = 0f)
+                BoxEdges(accent, 0.16f, 0.002f, 0.06f)
+            }
+            else -> {
+                BoxEdges(edge, 0.08f, 0.002f, 0.08f)
+                listOf(-0.16f, 0.16f).forEach { x -> BoxEdges(accent, 0.06f, 0.002f, 0.06f) }
+            }
+        }
+    }
 }
 
 @Composable
@@ -2389,15 +3478,61 @@ private fun ArChrome(
     onMarkerReset: () -> Unit,
     onMarkerActivity: (MarkerMathActivity) -> Unit,
     onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onMarker2dFinishDraft: () -> Unit,
+    onMarker2dCancelDraft: () -> Unit,
+    onMarker2dSelectNext: () -> Unit,
+    onMarker2dMove: (Float, Float) -> Unit,
+    onMarker2dRotate: (Float) -> Unit,
+    onMarker2dScale: (Float) -> Unit,
+    onMarker2dDuplicate: () -> Unit,
+    onMarker2dHide: () -> Unit,
+    onMarker2dDelete: () -> Unit,
+    onMarker2dToggleDisplay: (Marker2dDisplayOption) -> Unit,
+    onMarker2dConstraint: (Marker2dConstraintTool) -> Unit,
     onMarker3dObject: (String) -> Unit,
+    onMarker3dPlacePreview: () -> Unit,
+    onMarker3dCancelPreview: () -> Unit,
+    onMarker3dMovePreview: (Float, Float) -> Unit,
+    onMarker3dSelectNext: () -> Unit,
+    onMarker3dMove: (Float, Float, Float) -> Unit,
+    onMarker3dRotate: (Marker3dAxis, Float) -> Unit,
+    onMarker3dScale: (Float) -> Unit,
+    onMarker3dParameter: (String, Float) -> Unit,
+    onMarker3dDuplicate: () -> Unit,
+    onMarker3dHide: () -> Unit,
+    onMarker3dLock: () -> Unit,
+    onMarker3dDelete: () -> Unit,
+    onMarker3dReset: () -> Unit,
+    onMarker3dOverlay: (Marker3dOverlayOption) -> Unit,
+    onMarker3dExplode: () -> Unit,
+    onMarker3dSection: (Marker3dSectionMode) -> Unit,
+    onMarker3dClipping: (Float) -> Unit,
+    onMarker3dNet: () -> Unit,
+    onMarkerCoordinateTool: (MarkerCoordinateTool) -> Unit,
+    onMarkerCoordinateAddPoint: (Float, Float) -> Unit,
+    onMarkerCoordinateSelectNext: () -> Unit,
+    onMarkerCoordinateMovePoint: (Float, Float) -> Unit,
+    onMarkerCoordinateSetPoint: (Float, Float) -> Unit,
+    onMarkerCoordinateApplyTool: () -> Unit,
+    onMarkerCoordinateSnap: () -> Unit,
+    onMarkerCoordinateFormat: () -> Unit,
+    onMarkerCoordinateSlopeTriangle: () -> Unit,
+    onMarkerCoordinateTransform: (MarkerCoordinateTool, Float) -> Unit,
     onMarkerTransformationTool: (MarkerTransformationTool) -> Unit,
+    onMarkerTransformShape: (MarkerTransformShape) -> Unit,
+    onMarkerTransformationSequenceStep: (MarkerTransformSequenceAction) -> Unit,
+    onClearMarkerTransformationSequence: () -> Unit,
     onMarkerTransformProgress: (Float) -> Unit,
     onMarkerTranslationX: (Float) -> Unit,
     onMarkerTranslationY: (Float) -> Unit,
     onMarkerRotationDegrees: (Float) -> Unit,
+    onMarkerRotationCenterX: (Float) -> Unit,
+    onMarkerRotationCenterY: (Float) -> Unit,
     onMarkerRotationDirection: () -> Unit,
     onMarkerReflectionLine: (MarkerReflectionLine) -> Unit,
     onMarkerDilationScale: (Float) -> Unit,
+    onMarkerDilationCenterX: (Float) -> Unit,
+    onMarkerDilationCenterY: (Float) -> Unit,
     onMarkerHorizontalStretch: (Float) -> Unit,
     onMarkerVerticalStretch: (Float) -> Unit,
     onMarkerShear: (Float) -> Unit,
@@ -2414,6 +3549,18 @@ private fun ArChrome(
     onMarkerGraphZoom: (Double) -> Unit,
     onMarkerGraphPan: (Double, Double) -> Unit,
     onMarkerGraphFit: () -> Unit,
+    onMarkerGraphReset: () -> Unit,
+    onMarkerGraphXMin: (Float) -> Unit,
+    onMarkerGraphXMax: (Float) -> Unit,
+    onMarkerGraphYMin: (Float) -> Unit,
+    onMarkerGraphYMax: (Float) -> Unit,
+    onToggleMarkerGraphGrid: () -> Unit,
+    onToggleMarkerGraphLabels: () -> Unit,
+    onToggleMarkerGraphIntercepts: () -> Unit,
+    onToggleMarkerGraphExtrema: () -> Unit,
+    onToggleMarkerGraphDiscontinuities: () -> Unit,
+    onToggleMarkerGraphDerivative: () -> Unit,
+    onToggleMarkerGraphIntegralArea: () -> Unit,
     onClearMarkerWorkspace: () -> Unit
 ) {
     var controlsExpanded by remember { mutableStateOf(state.mathScene.objects.isEmpty()) }
@@ -2434,15 +3581,61 @@ private fun ArChrome(
             onSlicePosition = onSlicePosition,
             onMarkerActivity = onMarkerActivity,
             onMarker2dShape = onMarker2dShape,
+            onMarker2dFinishDraft = onMarker2dFinishDraft,
+            onMarker2dCancelDraft = onMarker2dCancelDraft,
+            onMarker2dSelectNext = onMarker2dSelectNext,
+            onMarker2dMove = onMarker2dMove,
+            onMarker2dRotate = onMarker2dRotate,
+            onMarker2dScale = onMarker2dScale,
+            onMarker2dDuplicate = onMarker2dDuplicate,
+            onMarker2dHide = onMarker2dHide,
+            onMarker2dDelete = onMarker2dDelete,
+            onMarker2dToggleDisplay = onMarker2dToggleDisplay,
+            onMarker2dConstraint = onMarker2dConstraint,
             onMarker3dObject = onMarker3dObject,
+            onMarker3dPlacePreview = onMarker3dPlacePreview,
+            onMarker3dCancelPreview = onMarker3dCancelPreview,
+            onMarker3dMovePreview = onMarker3dMovePreview,
+            onMarker3dSelectNext = onMarker3dSelectNext,
+            onMarker3dMove = onMarker3dMove,
+            onMarker3dRotate = onMarker3dRotate,
+            onMarker3dScale = onMarker3dScale,
+            onMarker3dParameter = onMarker3dParameter,
+            onMarker3dDuplicate = onMarker3dDuplicate,
+            onMarker3dHide = onMarker3dHide,
+            onMarker3dLock = onMarker3dLock,
+            onMarker3dDelete = onMarker3dDelete,
+            onMarker3dReset = onMarker3dReset,
+            onMarker3dOverlay = onMarker3dOverlay,
+            onMarker3dExplode = onMarker3dExplode,
+            onMarker3dSection = onMarker3dSection,
+            onMarker3dClipping = onMarker3dClipping,
+            onMarker3dNet = onMarker3dNet,
+            onMarkerCoordinateTool = onMarkerCoordinateTool,
+            onMarkerCoordinateAddPoint = onMarkerCoordinateAddPoint,
+            onMarkerCoordinateSelectNext = onMarkerCoordinateSelectNext,
+            onMarkerCoordinateMovePoint = onMarkerCoordinateMovePoint,
+            onMarkerCoordinateSetPoint = onMarkerCoordinateSetPoint,
+            onMarkerCoordinateApplyTool = onMarkerCoordinateApplyTool,
+            onMarkerCoordinateSnap = onMarkerCoordinateSnap,
+            onMarkerCoordinateFormat = onMarkerCoordinateFormat,
+            onMarkerCoordinateSlopeTriangle = onMarkerCoordinateSlopeTriangle,
+            onMarkerCoordinateTransform = onMarkerCoordinateTransform,
             onMarkerTransformationTool = onMarkerTransformationTool,
+            onMarkerTransformShape = onMarkerTransformShape,
+            onMarkerTransformationSequenceStep = onMarkerTransformationSequenceStep,
+            onClearMarkerTransformationSequence = onClearMarkerTransformationSequence,
             onMarkerTransformProgress = onMarkerTransformProgress,
             onMarkerTranslationX = onMarkerTranslationX,
             onMarkerTranslationY = onMarkerTranslationY,
             onMarkerRotationDegrees = onMarkerRotationDegrees,
+            onMarkerRotationCenterX = onMarkerRotationCenterX,
+            onMarkerRotationCenterY = onMarkerRotationCenterY,
             onMarkerRotationDirection = onMarkerRotationDirection,
             onMarkerReflectionLine = onMarkerReflectionLine,
             onMarkerDilationScale = onMarkerDilationScale,
+            onMarkerDilationCenterX = onMarkerDilationCenterX,
+            onMarkerDilationCenterY = onMarkerDilationCenterY,
             onMarkerHorizontalStretch = onMarkerHorizontalStretch,
             onMarkerVerticalStretch = onMarkerVerticalStretch,
             onMarkerShear = onMarkerShear,
@@ -2459,6 +3652,18 @@ private fun ArChrome(
             onMarkerGraphZoom = onMarkerGraphZoom,
             onMarkerGraphPan = onMarkerGraphPan,
             onMarkerGraphFit = onMarkerGraphFit,
+            onMarkerGraphReset = onMarkerGraphReset,
+            onMarkerGraphXMin = onMarkerGraphXMin,
+            onMarkerGraphXMax = onMarkerGraphXMax,
+            onMarkerGraphYMin = onMarkerGraphYMin,
+            onMarkerGraphYMax = onMarkerGraphYMax,
+            onToggleMarkerGraphGrid = onToggleMarkerGraphGrid,
+            onToggleMarkerGraphLabels = onToggleMarkerGraphLabels,
+            onToggleMarkerGraphIntercepts = onToggleMarkerGraphIntercepts,
+            onToggleMarkerGraphExtrema = onToggleMarkerGraphExtrema,
+            onToggleMarkerGraphDiscontinuities = onToggleMarkerGraphDiscontinuities,
+            onToggleMarkerGraphDerivative = onToggleMarkerGraphDerivative,
+            onToggleMarkerGraphIntegralArea = onToggleMarkerGraphIntegralArea,
             onClearMarkerWorkspace = onClearMarkerWorkspace
         )
         return
@@ -2984,15 +4189,61 @@ private fun QuietMarkerChrome(
     onSlicePosition: (Float) -> Unit,
     onMarkerActivity: (MarkerMathActivity) -> Unit,
     onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onMarker2dFinishDraft: () -> Unit,
+    onMarker2dCancelDraft: () -> Unit,
+    onMarker2dSelectNext: () -> Unit,
+    onMarker2dMove: (Float, Float) -> Unit,
+    onMarker2dRotate: (Float) -> Unit,
+    onMarker2dScale: (Float) -> Unit,
+    onMarker2dDuplicate: () -> Unit,
+    onMarker2dHide: () -> Unit,
+    onMarker2dDelete: () -> Unit,
+    onMarker2dToggleDisplay: (Marker2dDisplayOption) -> Unit,
+    onMarker2dConstraint: (Marker2dConstraintTool) -> Unit,
     onMarker3dObject: (String) -> Unit,
+    onMarker3dPlacePreview: () -> Unit,
+    onMarker3dCancelPreview: () -> Unit,
+    onMarker3dMovePreview: (Float, Float) -> Unit,
+    onMarker3dSelectNext: () -> Unit,
+    onMarker3dMove: (Float, Float, Float) -> Unit,
+    onMarker3dRotate: (Marker3dAxis, Float) -> Unit,
+    onMarker3dScale: (Float) -> Unit,
+    onMarker3dParameter: (String, Float) -> Unit,
+    onMarker3dDuplicate: () -> Unit,
+    onMarker3dHide: () -> Unit,
+    onMarker3dLock: () -> Unit,
+    onMarker3dDelete: () -> Unit,
+    onMarker3dReset: () -> Unit,
+    onMarker3dOverlay: (Marker3dOverlayOption) -> Unit,
+    onMarker3dExplode: () -> Unit,
+    onMarker3dSection: (Marker3dSectionMode) -> Unit,
+    onMarker3dClipping: (Float) -> Unit,
+    onMarker3dNet: () -> Unit,
+    onMarkerCoordinateTool: (MarkerCoordinateTool) -> Unit,
+    onMarkerCoordinateAddPoint: (Float, Float) -> Unit,
+    onMarkerCoordinateSelectNext: () -> Unit,
+    onMarkerCoordinateMovePoint: (Float, Float) -> Unit,
+    onMarkerCoordinateSetPoint: (Float, Float) -> Unit,
+    onMarkerCoordinateApplyTool: () -> Unit,
+    onMarkerCoordinateSnap: () -> Unit,
+    onMarkerCoordinateFormat: () -> Unit,
+    onMarkerCoordinateSlopeTriangle: () -> Unit,
+    onMarkerCoordinateTransform: (MarkerCoordinateTool, Float) -> Unit,
     onMarkerTransformationTool: (MarkerTransformationTool) -> Unit,
+    onMarkerTransformShape: (MarkerTransformShape) -> Unit,
+    onMarkerTransformationSequenceStep: (MarkerTransformSequenceAction) -> Unit,
+    onClearMarkerTransformationSequence: () -> Unit,
     onMarkerTransformProgress: (Float) -> Unit,
     onMarkerTranslationX: (Float) -> Unit,
     onMarkerTranslationY: (Float) -> Unit,
     onMarkerRotationDegrees: (Float) -> Unit,
+    onMarkerRotationCenterX: (Float) -> Unit,
+    onMarkerRotationCenterY: (Float) -> Unit,
     onMarkerRotationDirection: () -> Unit,
     onMarkerReflectionLine: (MarkerReflectionLine) -> Unit,
     onMarkerDilationScale: (Float) -> Unit,
+    onMarkerDilationCenterX: (Float) -> Unit,
+    onMarkerDilationCenterY: (Float) -> Unit,
     onMarkerHorizontalStretch: (Float) -> Unit,
     onMarkerVerticalStretch: (Float) -> Unit,
     onMarkerShear: (Float) -> Unit,
@@ -3009,6 +4260,18 @@ private fun QuietMarkerChrome(
     onMarkerGraphZoom: (Double) -> Unit,
     onMarkerGraphPan: (Double, Double) -> Unit,
     onMarkerGraphFit: () -> Unit,
+    onMarkerGraphReset: () -> Unit,
+    onMarkerGraphXMin: (Float) -> Unit,
+    onMarkerGraphXMax: (Float) -> Unit,
+    onMarkerGraphYMin: (Float) -> Unit,
+    onMarkerGraphYMax: (Float) -> Unit,
+    onToggleMarkerGraphGrid: () -> Unit,
+    onToggleMarkerGraphLabels: () -> Unit,
+    onToggleMarkerGraphIntercepts: () -> Unit,
+    onToggleMarkerGraphExtrema: () -> Unit,
+    onToggleMarkerGraphDiscontinuities: () -> Unit,
+    onToggleMarkerGraphDerivative: () -> Unit,
+    onToggleMarkerGraphIntegralArea: () -> Unit,
     onClearMarkerWorkspace: () -> Unit
 ) {
     val lockedTarget = state.paperGraph?.bestLockedTarget
@@ -3036,20 +4299,66 @@ private fun QuietMarkerChrome(
                 state = state,
                 onMarkerActivity = onMarkerActivity,
                 onMarker2dShape = onMarker2dShape,
+                onMarker2dFinishDraft = onMarker2dFinishDraft,
+                onMarker2dCancelDraft = onMarker2dCancelDraft,
+                onMarker2dSelectNext = onMarker2dSelectNext,
+                onMarker2dMove = onMarker2dMove,
+                onMarker2dRotate = onMarker2dRotate,
+                onMarker2dScale = onMarker2dScale,
+                onMarker2dDuplicate = onMarker2dDuplicate,
+                onMarker2dHide = onMarker2dHide,
+                onMarker2dDelete = onMarker2dDelete,
+                onMarker2dToggleDisplay = onMarker2dToggleDisplay,
+                onMarker2dConstraint = onMarker2dConstraint,
                 onMarker3dObject = onMarker3dObject,
+                onMarker3dPlacePreview = onMarker3dPlacePreview,
+                onMarker3dCancelPreview = onMarker3dCancelPreview,
+                onMarker3dMovePreview = onMarker3dMovePreview,
+                onMarker3dSelectNext = onMarker3dSelectNext,
+                onMarker3dMove = onMarker3dMove,
+                onMarker3dRotate = onMarker3dRotate,
+                onMarker3dScale = onMarker3dScale,
+                onMarker3dParameter = onMarker3dParameter,
+                onMarker3dDuplicate = onMarker3dDuplicate,
+                onMarker3dHide = onMarker3dHide,
+                onMarker3dLock = onMarker3dLock,
+                onMarker3dDelete = onMarker3dDelete,
+                onMarker3dReset = onMarker3dReset,
+                onMarker3dOverlay = onMarker3dOverlay,
+                onMarker3dExplode = onMarker3dExplode,
+                onMarker3dSection = onMarker3dSection,
+                onMarker3dClipping = onMarker3dClipping,
+                onMarker3dNet = onMarker3dNet,
+                onMarkerCoordinateTool = onMarkerCoordinateTool,
+                onMarkerCoordinateAddPoint = onMarkerCoordinateAddPoint,
+                onMarkerCoordinateSelectNext = onMarkerCoordinateSelectNext,
+                onMarkerCoordinateMovePoint = onMarkerCoordinateMovePoint,
+                onMarkerCoordinateSetPoint = onMarkerCoordinateSetPoint,
+                onMarkerCoordinateApplyTool = onMarkerCoordinateApplyTool,
+                onMarkerCoordinateSnap = onMarkerCoordinateSnap,
+                onMarkerCoordinateFormat = onMarkerCoordinateFormat,
+                onMarkerCoordinateSlopeTriangle = onMarkerCoordinateSlopeTriangle,
+                onMarkerCoordinateTransform = onMarkerCoordinateTransform,
                 onLiveEquation = onLiveEquation,
                 onGraphColorMap = onGraphColorMap,
                 onFunction3dTransform = onFunction3dTransform,
                 onAnimationProgress = onAnimationProgress,
                 onSlicePosition = onSlicePosition,
                 onMarkerTransformationTool = onMarkerTransformationTool,
+                onMarkerTransformShape = onMarkerTransformShape,
+                onMarkerTransformationSequenceStep = onMarkerTransformationSequenceStep,
+                onClearMarkerTransformationSequence = onClearMarkerTransformationSequence,
                 onMarkerTransformProgress = onMarkerTransformProgress,
                 onMarkerTranslationX = onMarkerTranslationX,
                 onMarkerTranslationY = onMarkerTranslationY,
                 onMarkerRotationDegrees = onMarkerRotationDegrees,
+                onMarkerRotationCenterX = onMarkerRotationCenterX,
+                onMarkerRotationCenterY = onMarkerRotationCenterY,
                 onMarkerRotationDirection = onMarkerRotationDirection,
                 onMarkerReflectionLine = onMarkerReflectionLine,
                 onMarkerDilationScale = onMarkerDilationScale,
+                onMarkerDilationCenterX = onMarkerDilationCenterX,
+                onMarkerDilationCenterY = onMarkerDilationCenterY,
                 onMarkerHorizontalStretch = onMarkerHorizontalStretch,
                 onMarkerVerticalStretch = onMarkerVerticalStretch,
                 onMarkerShear = onMarkerShear,
@@ -3066,6 +4375,18 @@ private fun QuietMarkerChrome(
                 onMarkerGraphZoom = onMarkerGraphZoom,
                 onMarkerGraphPan = onMarkerGraphPan,
                 onMarkerGraphFit = onMarkerGraphFit,
+                onMarkerGraphReset = onMarkerGraphReset,
+                onMarkerGraphXMin = onMarkerGraphXMin,
+                onMarkerGraphXMax = onMarkerGraphXMax,
+                onMarkerGraphYMin = onMarkerGraphYMin,
+                onMarkerGraphYMax = onMarkerGraphYMax,
+                onToggleMarkerGraphGrid = onToggleMarkerGraphGrid,
+                onToggleMarkerGraphLabels = onToggleMarkerGraphLabels,
+                onToggleMarkerGraphIntercepts = onToggleMarkerGraphIntercepts,
+                onToggleMarkerGraphExtrema = onToggleMarkerGraphExtrema,
+                onToggleMarkerGraphDiscontinuities = onToggleMarkerGraphDiscontinuities,
+                onToggleMarkerGraphDerivative = onToggleMarkerGraphDerivative,
+                onToggleMarkerGraphIntegralArea = onToggleMarkerGraphIntegralArea,
                 onClearMarkerWorkspace = onClearMarkerWorkspace,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -3105,20 +4426,66 @@ private fun MarkerWorkspacePanel(
     state: ArViewerUiState,
     onMarkerActivity: (MarkerMathActivity) -> Unit,
     onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onMarker2dFinishDraft: () -> Unit,
+    onMarker2dCancelDraft: () -> Unit,
+    onMarker2dSelectNext: () -> Unit,
+    onMarker2dMove: (Float, Float) -> Unit,
+    onMarker2dRotate: (Float) -> Unit,
+    onMarker2dScale: (Float) -> Unit,
+    onMarker2dDuplicate: () -> Unit,
+    onMarker2dHide: () -> Unit,
+    onMarker2dDelete: () -> Unit,
+    onMarker2dToggleDisplay: (Marker2dDisplayOption) -> Unit,
+    onMarker2dConstraint: (Marker2dConstraintTool) -> Unit,
     onMarker3dObject: (String) -> Unit,
+    onMarker3dPlacePreview: () -> Unit,
+    onMarker3dCancelPreview: () -> Unit,
+    onMarker3dMovePreview: (Float, Float) -> Unit,
+    onMarker3dSelectNext: () -> Unit,
+    onMarker3dMove: (Float, Float, Float) -> Unit,
+    onMarker3dRotate: (Marker3dAxis, Float) -> Unit,
+    onMarker3dScale: (Float) -> Unit,
+    onMarker3dParameter: (String, Float) -> Unit,
+    onMarker3dDuplicate: () -> Unit,
+    onMarker3dHide: () -> Unit,
+    onMarker3dLock: () -> Unit,
+    onMarker3dDelete: () -> Unit,
+    onMarker3dReset: () -> Unit,
+    onMarker3dOverlay: (Marker3dOverlayOption) -> Unit,
+    onMarker3dExplode: () -> Unit,
+    onMarker3dSection: (Marker3dSectionMode) -> Unit,
+    onMarker3dClipping: (Float) -> Unit,
+    onMarker3dNet: () -> Unit,
+    onMarkerCoordinateTool: (MarkerCoordinateTool) -> Unit,
+    onMarkerCoordinateAddPoint: (Float, Float) -> Unit,
+    onMarkerCoordinateSelectNext: () -> Unit,
+    onMarkerCoordinateMovePoint: (Float, Float) -> Unit,
+    onMarkerCoordinateSetPoint: (Float, Float) -> Unit,
+    onMarkerCoordinateApplyTool: () -> Unit,
+    onMarkerCoordinateSnap: () -> Unit,
+    onMarkerCoordinateFormat: () -> Unit,
+    onMarkerCoordinateSlopeTriangle: () -> Unit,
+    onMarkerCoordinateTransform: (MarkerCoordinateTool, Float) -> Unit,
     onLiveEquation: (String) -> Unit,
     onGraphColorMap: (GraphColorMap) -> Unit,
     onFunction3dTransform: (Function3dTransformMode) -> Unit,
     onAnimationProgress: (Float) -> Unit,
     onSlicePosition: (Float) -> Unit,
     onMarkerTransformationTool: (MarkerTransformationTool) -> Unit,
+    onMarkerTransformShape: (MarkerTransformShape) -> Unit,
+    onMarkerTransformationSequenceStep: (MarkerTransformSequenceAction) -> Unit,
+    onClearMarkerTransformationSequence: () -> Unit,
     onMarkerTransformProgress: (Float) -> Unit,
     onMarkerTranslationX: (Float) -> Unit,
     onMarkerTranslationY: (Float) -> Unit,
     onMarkerRotationDegrees: (Float) -> Unit,
+    onMarkerRotationCenterX: (Float) -> Unit,
+    onMarkerRotationCenterY: (Float) -> Unit,
     onMarkerRotationDirection: () -> Unit,
     onMarkerReflectionLine: (MarkerReflectionLine) -> Unit,
     onMarkerDilationScale: (Float) -> Unit,
+    onMarkerDilationCenterX: (Float) -> Unit,
+    onMarkerDilationCenterY: (Float) -> Unit,
     onMarkerHorizontalStretch: (Float) -> Unit,
     onMarkerVerticalStretch: (Float) -> Unit,
     onMarkerShear: (Float) -> Unit,
@@ -3135,6 +4502,18 @@ private fun MarkerWorkspacePanel(
     onMarkerGraphZoom: (Double) -> Unit,
     onMarkerGraphPan: (Double, Double) -> Unit,
     onMarkerGraphFit: () -> Unit,
+    onMarkerGraphReset: () -> Unit,
+    onMarkerGraphXMin: (Float) -> Unit,
+    onMarkerGraphXMax: (Float) -> Unit,
+    onMarkerGraphYMin: (Float) -> Unit,
+    onMarkerGraphYMax: (Float) -> Unit,
+    onToggleMarkerGraphGrid: () -> Unit,
+    onToggleMarkerGraphLabels: () -> Unit,
+    onToggleMarkerGraphIntercepts: () -> Unit,
+    onToggleMarkerGraphExtrema: () -> Unit,
+    onToggleMarkerGraphDiscontinuities: () -> Unit,
+    onToggleMarkerGraphDerivative: () -> Unit,
+    onToggleMarkerGraphIntegralArea: () -> Unit,
     onClearMarkerWorkspace: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -3163,8 +4542,43 @@ private fun MarkerWorkspacePanel(
                 }
             }
             when (state.markerMathActivity) {
-                MarkerMathActivity.Geometry2D -> Marker2dToolTray(onMarker2dShape)
-                MarkerMathActivity.Geometry3D -> Marker3dToolTray(onMarker3dObject)
+                MarkerMathActivity.Geometry2D -> Marker2dToolTray(
+                    state = state,
+                    onMarker2dShape = onMarker2dShape,
+                    onFinishDraft = onMarker2dFinishDraft,
+                    onCancelDraft = onMarker2dCancelDraft,
+                    onSelectNext = onMarker2dSelectNext,
+                    onMove = onMarker2dMove,
+                    onRotate = onMarker2dRotate,
+                    onScale = onMarker2dScale,
+                    onDuplicate = onMarker2dDuplicate,
+                    onHide = onMarker2dHide,
+                    onDelete = onMarker2dDelete,
+                    onToggleDisplay = onMarker2dToggleDisplay,
+                    onConstraint = onMarker2dConstraint
+                )
+                MarkerMathActivity.Geometry3D -> Marker3dToolTray(
+                    state = state,
+                    onMarker3dObject = onMarker3dObject,
+                    onPlacePreview = onMarker3dPlacePreview,
+                    onCancelPreview = onMarker3dCancelPreview,
+                    onMovePreview = onMarker3dMovePreview,
+                    onSelectNext = onMarker3dSelectNext,
+                    onMove = onMarker3dMove,
+                    onRotate = onMarker3dRotate,
+                    onScale = onMarker3dScale,
+                    onParameter = onMarker3dParameter,
+                    onDuplicate = onMarker3dDuplicate,
+                    onHide = onMarker3dHide,
+                    onLock = onMarker3dLock,
+                    onDelete = onMarker3dDelete,
+                    onReset = onMarker3dReset,
+                    onOverlay = onMarker3dOverlay,
+                    onExplode = onMarker3dExplode,
+                    onSection = onMarker3dSection,
+                    onClipping = onMarker3dClipping,
+                    onNet = onMarker3dNet
+                )
                 MarkerMathActivity.FunctionGraph -> MarkerGraphToolTray(
                     state = state,
                     onLiveEquation = onLiveEquation,
@@ -3179,22 +4593,53 @@ private fun MarkerWorkspacePanel(
                     onMarkerGraphZoom = onMarkerGraphZoom,
                     onMarkerGraphPan = onMarkerGraphPan,
                     onMarkerGraphFit = onMarkerGraphFit,
+                    onMarkerGraphReset = onMarkerGraphReset,
+                    onMarkerGraphXMin = onMarkerGraphXMin,
+                    onMarkerGraphXMax = onMarkerGraphXMax,
+                    onMarkerGraphYMin = onMarkerGraphYMin,
+                    onMarkerGraphYMax = onMarkerGraphYMax,
+                    onToggleMarkerGraphGrid = onToggleMarkerGraphGrid,
+                    onToggleMarkerGraphLabels = onToggleMarkerGraphLabels,
+                    onToggleMarkerGraphIntercepts = onToggleMarkerGraphIntercepts,
+                    onToggleMarkerGraphExtrema = onToggleMarkerGraphExtrema,
+                    onToggleMarkerGraphDiscontinuities = onToggleMarkerGraphDiscontinuities,
+                    onToggleMarkerGraphDerivative = onToggleMarkerGraphDerivative,
+                    onToggleMarkerGraphIntegralArea = onToggleMarkerGraphIntegralArea,
                     onGraphColorMap = onGraphColorMap,
                     onFunction3dTransform = onFunction3dTransform,
                     onAnimationProgress = onAnimationProgress,
                     onSlicePosition = onSlicePosition
                 )
-                MarkerMathActivity.CoordinateLab -> MarkerCoordinateToolTray(onMarker2dShape)
+                MarkerMathActivity.CoordinateLab -> MarkerCoordinateToolTray(
+                    state = state,
+                    onTool = onMarkerCoordinateTool,
+                    onAddPoint = onMarkerCoordinateAddPoint,
+                    onSelectNext = onMarkerCoordinateSelectNext,
+                    onMovePoint = onMarkerCoordinateMovePoint,
+                    onSetPoint = onMarkerCoordinateSetPoint,
+                    onApplyTool = onMarkerCoordinateApplyTool,
+                    onSnap = onMarkerCoordinateSnap,
+                    onFormat = onMarkerCoordinateFormat,
+                    onSlopeTriangle = onMarkerCoordinateSlopeTriangle,
+                    onTransform = onMarkerCoordinateTransform
+                )
                 MarkerMathActivity.Transformations -> MarkerTransformationToolTray(
                     state = state,
                     onTool = onMarkerTransformationTool,
+                    onShape = onMarkerTransformShape,
+                    onSequenceStep = onMarkerTransformationSequenceStep,
+                    onClearSequence = onClearMarkerTransformationSequence,
                     onProgress = onMarkerTransformProgress,
                     onTranslationX = onMarkerTranslationX,
                     onTranslationY = onMarkerTranslationY,
                     onRotationDegrees = onMarkerRotationDegrees,
+                    onRotationCenterX = onMarkerRotationCenterX,
+                    onRotationCenterY = onMarkerRotationCenterY,
                     onRotationDirection = onMarkerRotationDirection,
                     onReflectionLine = onMarkerReflectionLine,
                     onDilationScale = onMarkerDilationScale,
+                    onDilationCenterX = onMarkerDilationCenterX,
+                    onDilationCenterY = onMarkerDilationCenterY,
                     onHorizontalStretch = onMarkerHorizontalStretch,
                     onVerticalStretch = onMarkerVerticalStretch,
                     onShear = onMarkerShear,
@@ -3208,53 +4653,225 @@ private fun MarkerWorkspacePanel(
 }
 
 @Composable
-private fun Marker2dToolTray(onMarker2dShape: (Marker2dShapeTool) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        items(
-            listOf(
-                Marker2dShapeTool.Point,
-                Marker2dShapeTool.Line,
-                Marker2dShapeTool.Segment,
-                Marker2dShapeTool.Ray,
-                Marker2dShapeTool.Triangle,
-                Marker2dShapeTool.Square,
-                Marker2dShapeTool.Rectangle,
-                Marker2dShapeTool.Circle,
-                Marker2dShapeTool.Ellipse,
-                Marker2dShapeTool.Polygon,
-                Marker2dShapeTool.RegularPolygon,
-                Marker2dShapeTool.Angle,
-                Marker2dShapeTool.Arc,
-                Marker2dShapeTool.Perpendicular,
-                Marker2dShapeTool.Parallel
-            )
-        ) { shape ->
-            RealGlassChip(label = shape.label, selected = false, accent = arMathMint, onClick = { onMarker2dShape(shape) })
+private fun Marker2dToolTray(
+    state: ArViewerUiState,
+    onMarker2dShape: (Marker2dShapeTool) -> Unit,
+    onFinishDraft: () -> Unit,
+    onCancelDraft: () -> Unit,
+    onSelectNext: () -> Unit,
+    onMove: (Float, Float) -> Unit,
+    onRotate: (Float) -> Unit,
+    onScale: (Float) -> Unit,
+    onDuplicate: () -> Unit,
+    onHide: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleDisplay: (Marker2dDisplayOption) -> Unit,
+    onConstraint: (Marker2dConstraintTool) -> Unit
+) {
+    val tools = listOf(
+        Marker2dShapeTool.Point,
+        Marker2dShapeTool.Line,
+        Marker2dShapeTool.Segment,
+        Marker2dShapeTool.Ray,
+        Marker2dShapeTool.Triangle,
+        Marker2dShapeTool.Square,
+        Marker2dShapeTool.Rectangle,
+        Marker2dShapeTool.Circle,
+        Marker2dShapeTool.Ellipse,
+        Marker2dShapeTool.Polygon,
+        Marker2dShapeTool.RegularPolygon,
+        Marker2dShapeTool.Angle,
+        Marker2dShapeTool.Arc,
+        Marker2dShapeTool.Perpendicular,
+        Marker2dShapeTool.Parallel
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val active = state.marker2dActiveTool
+        Text(
+            text = active?.let { "${it.label}: tap G01 (${state.marker2dDraftPoints.size} point${if (state.marker2dDraftPoints.size == 1) "" else "s"})" }
+                ?: "Choose a 2D tool, then tap points on G01",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (active == null) Color.White.copy(alpha = 0.82f) else arMathMint
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(tools) { shape ->
+                RealGlassChip(
+                    label = shape.label,
+                    selected = state.marker2dActiveTool == shape,
+                    accent = arMathMint,
+                    onClick = { onMarker2dShape(shape) }
+                )
+            }
+        }
+        if (active != null || state.marker2dDraftPoints.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                item { RealGlassChip(label = "Finish", selected = false, accent = arMathViolet, onClick = onFinishDraft) }
+                item { RealGlassChip(label = "Cancel", selected = false, accent = Color(0xFFFF8A65), onClick = onCancelDraft) }
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip(label = "Select", selected = state.marker2dSelectedObjectId != null, accent = arMathCyan, onClick = onSelectNext) }
+            item { RealGlassChip(label = "Left", selected = false, accent = arMathCyan, onClick = { onMove(-0.04f, 0f) }) }
+            item { RealGlassChip(label = "Right", selected = false, accent = arMathCyan, onClick = { onMove(0.04f, 0f) }) }
+            item { RealGlassChip(label = "Up", selected = false, accent = arMathCyan, onClick = { onMove(0f, -0.04f) }) }
+            item { RealGlassChip(label = "Down", selected = false, accent = arMathCyan, onClick = { onMove(0f, 0.04f) }) }
+            item { RealGlassChip(label = "Rotate", selected = false, accent = arMathViolet, onClick = { onRotate(15f) }) }
+            item { RealGlassChip(label = "Grow", selected = false, accent = arMathViolet, onClick = { onScale(1.1f) }) }
+            item { RealGlassChip(label = "Shrink", selected = false, accent = arMathViolet, onClick = { onScale(0.9f) }) }
+            item { RealGlassChip(label = "Copy", selected = false, accent = arMathMint, onClick = onDuplicate) }
+            item { RealGlassChip(label = "Hide", selected = false, accent = Color(0xFFFFC857), onClick = onHide) }
+            item { RealGlassChip(label = "Delete", selected = false, accent = Color(0xFFFF6B8A), onClick = onDelete) }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip("Labels", state.marker2dShowLabels, arMathMint) { onToggleDisplay(Marker2dDisplayOption.Labels) } }
+            item { RealGlassChip("Vertices", state.marker2dShowVertices, arMathMint) { onToggleDisplay(Marker2dDisplayOption.Vertices) } }
+            item { RealGlassChip("Measure", state.marker2dShowMeasurements, arMathMint) { onToggleDisplay(Marker2dDisplayOption.Measurements) } }
+            item { RealGlassChip("Grid snap", state.marker2dSnapToGrid, arMathCyan) { onToggleDisplay(Marker2dDisplayOption.SnapGrid) } }
+            item { RealGlassChip("Point snap", state.marker2dSnapToPoints, arMathCyan) { onToggleDisplay(Marker2dDisplayOption.SnapPoints) } }
+            item { RealGlassChip("Lock", state.marker2dLockShape, Color(0xFFFFC857)) { onToggleDisplay(Marker2dDisplayOption.LockShape) } }
+            item { RealGlassChip("Construct", state.marker2dShowConstructionLines, arMathViolet) { onToggleDisplay(Marker2dDisplayOption.ConstructionLines) } }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(Marker2dConstraintTool.entries) { constraint ->
+                RealGlassChip(
+                    label = constraint.shortLabel(),
+                    selected = state.marker2dActiveConstraint == constraint,
+                    accent = Color(0xFFFFC857),
+                    onClick = { onConstraint(constraint) }
+                )
+            }
+        }
+        state.marker2dSelectedObjectId?.let { selectedId ->
+            val selected = state.resolvedConstructions.firstOrNull { it.id == selectedId }
+            selected?.let {
+                Text(
+                    text = "${it.label}  ${if (state.marker2dShowMeasurements) it.valueLabel else ""}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = arMathCyan
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun Marker3dToolTray(onMarker3dObject: (String) -> Unit) {
+private fun Marker3dToolTray(
+    state: ArViewerUiState,
+    onMarker3dObject: (String) -> Unit,
+    onPlacePreview: () -> Unit,
+    onCancelPreview: () -> Unit,
+    onMovePreview: (Float, Float) -> Unit,
+    onSelectNext: () -> Unit,
+    onMove: (Float, Float, Float) -> Unit,
+    onRotate: (Marker3dAxis, Float) -> Unit,
+    onScale: (Float) -> Unit,
+    onParameter: (String, Float) -> Unit,
+    onDuplicate: () -> Unit,
+    onHide: () -> Unit,
+    onLock: () -> Unit,
+    onDelete: () -> Unit,
+    onReset: () -> Unit,
+    onOverlay: (Marker3dOverlayOption) -> Unit,
+    onExplode: () -> Unit,
+    onSection: (Marker3dSectionMode) -> Unit,
+    onClipping: (Float) -> Unit,
+    onNet: () -> Unit
+) {
     val solids = listOf(
         "cube" to "Cube",
-        "rectangular-prism" to "Cuboid",
+        "cuboid" to "Cuboid",
         "sphere" to "Sphere",
-        "sphere" to "Hemisphere",
+        "hemisphere" to "Hemisphere",
         "cylinder" to "Cylinder",
         "cone" to "Cone",
-        "cone" to "Pyramid",
-        "rectangular-prism" to "Triangular prism",
+        "pyramid" to "Pyramid",
+        "triangular-prism" to "Triangular prism",
         "rectangular-prism" to "Rectangular prism",
-        "triangle" to "Tetrahedron",
-        "circle" to "Torus",
-        "cone" to "Frustum",
-        "rectangular-prism" to "Custom prism",
-        "cone" to "Custom pyramid"
+        "tetrahedron" to "Tetrahedron",
+        "torus" to "Torus",
+        "frustum" to "Frustum",
+        "custom-prism" to "Custom prism",
+        "custom-pyramid" to "Custom pyramid"
     )
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        items(solids) { (definitionId, label) ->
-            RealGlassChip(label = label, selected = false, accent = arMathViolet, onClick = { onMarker3dObject(definitionId) })
+    val selected = state.marker3dSolids.firstOrNull { it.selected } ?: state.marker3dSolids.firstOrNull { it.id == state.marker3dSelectedSolidId }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = state.marker3dPreviewTool?.let { "${it.uiLabel()} preview: tap G01 or Place" }
+                ?: selected?.let { "${it.label}: edit selected solid only" }
+                ?: "Choose a 3D solid",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (state.marker3dPreviewTool == null) Color.White.copy(alpha = 0.82f) else arMathViolet
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(solids) { (id, label) ->
+                RealGlassChip(label = label, selected = state.marker3dPreviewTool?.uiId() == id, accent = arMathViolet, onClick = { onMarker3dObject(id) })
+            }
+        }
+        if (state.marker3dPreviewTool != null) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                item { RealGlassChip("Place", false, arMathMint, onPlacePreview) }
+                item { RealGlassChip("Cancel", false, Color(0xFFFF8A65), onCancelPreview) }
+                item { RealGlassChip("Preview L", false, arMathCyan) { onMovePreview(-0.04f, 0f) } }
+                item { RealGlassChip("Preview R", false, arMathCyan) { onMovePreview(0.04f, 0f) } }
+                item { RealGlassChip("Preview Up", false, arMathCyan) { onMovePreview(0f, -0.04f) } }
+                item { RealGlassChip("Preview Down", false, arMathCyan) { onMovePreview(0f, 0.04f) } }
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip("Select", selected != null, arMathCyan, onSelectNext) }
+            item { RealGlassChip("X-", false, arMathCyan) { onMove(-0.04f, 0f, 0f) } }
+            item { RealGlassChip("X+", false, arMathCyan) { onMove(0.04f, 0f, 0f) } }
+            item { RealGlassChip("Z-", false, arMathCyan) { onMove(0f, -0.04f, 0f) } }
+            item { RealGlassChip("Z+", false, arMathCyan) { onMove(0f, 0.04f, 0f) } }
+            item { RealGlassChip("Lift", false, arMathMint) { onMove(0f, 0f, 0.03f) } }
+            item { RealGlassChip("Lower", false, arMathMint) { onMove(0f, 0f, -0.03f) } }
+            item { RealGlassChip("Rot X", false, arMathViolet) { onRotate(Marker3dAxis.X, 15f) } }
+            item { RealGlassChip("Rot Y", false, arMathViolet) { onRotate(Marker3dAxis.Y, 15f) } }
+            item { RealGlassChip("Rot Z", false, arMathViolet) { onRotate(Marker3dAxis.Z, 15f) } }
+            item { RealGlassChip("Grow", false, arMathViolet) { onScale(1.1f) } }
+            item { RealGlassChip("Shrink", false, arMathViolet) { onScale(0.9f) } }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip("Copy", false, arMathMint, onDuplicate) }
+            item { RealGlassChip("Hide", false, Color(0xFFFFC857), onHide) }
+            item { RealGlassChip("Lock", selected?.locked == true, Color(0xFFFFC857), onLock) }
+            item { RealGlassChip("Delete", false, Color(0xFFFF6B8A), onDelete) }
+            item { RealGlassChip("Reset", false, arMathCyan, onReset) }
+            item { RealGlassChip("Explode", selected?.exploded == true, arMathViolet, onExplode) }
+            item { RealGlassChip("Net", selected?.showNet == true, arMathMint, onNet) }
+            item { RealGlassChip("H section", selected?.sectionMode == Marker3dSectionMode.Horizontal, arMathCyan) { onSection(Marker3dSectionMode.Horizontal) } }
+            item { RealGlassChip("V section", selected?.sectionMode == Marker3dSectionMode.Vertical, arMathCyan) { onSection(Marker3dSectionMode.Vertical) } }
+            item { RealGlassChip("No section", selected?.sectionMode == Marker3dSectionMode.None, arMathCyan) { onSection(Marker3dSectionMode.None) } }
+        }
+        selected?.let { solid ->
+            solid.parameterRows().forEach { (id, label, min, max) ->
+                MarkerSliderRow(
+                    label = label,
+                    value = solid.parameters[id] ?: min,
+                    valueRange = min..max,
+                    valueText = "${((solid.parameters[id] ?: min) * 100).toInt()} cm",
+                    onValueChange = { onParameter(id, it) }
+                )
+            }
+            MarkerSliderRow(
+                label = "Clip",
+                value = solid.clipping,
+                valueRange = 0f..1f,
+                valueText = "${(solid.clipping * 100).toInt()}%",
+                onValueChange = onClipping
+            )
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(Marker3dOverlayOption.entries) { option ->
+                RealGlassChip(option.shortLabel(), option in state.marker3dOverlays, arMathMint) { onOverlay(option) }
+            }
+        }
+        selected?.let {
+            Text(
+                text = "${it.metricSummary()}  rot(${it.rotationX.toInt()}, ${it.rotationY.toInt()}, ${it.rotationZ.toInt()})",
+                style = MaterialTheme.typography.labelMedium,
+                color = arMathCyan
+            )
         }
     }
 }
@@ -3274,79 +4891,319 @@ private fun MarkerGraphToolTray(
     onMarkerGraphZoom: (Double) -> Unit,
     onMarkerGraphPan: (Double, Double) -> Unit,
     onMarkerGraphFit: () -> Unit,
+    onMarkerGraphReset: () -> Unit,
+    onMarkerGraphXMin: (Float) -> Unit,
+    onMarkerGraphXMax: (Float) -> Unit,
+    onMarkerGraphYMin: (Float) -> Unit,
+    onMarkerGraphYMax: (Float) -> Unit,
+    onToggleMarkerGraphGrid: () -> Unit,
+    onToggleMarkerGraphLabels: () -> Unit,
+    onToggleMarkerGraphIntercepts: () -> Unit,
+    onToggleMarkerGraphExtrema: () -> Unit,
+    onToggleMarkerGraphDiscontinuities: () -> Unit,
+    onToggleMarkerGraphDerivative: () -> Unit,
+    onToggleMarkerGraphIntegralArea: () -> Unit,
     onGraphColorMap: (GraphColorMap) -> Unit,
     onFunction3dTransform: (Function3dTransformMode) -> Unit,
     onAnimationProgress: (Float) -> Unit,
     onSlicePosition: (Float) -> Unit
 ) {
+    var graphPanelMode by remember { mutableStateOf("Plot") }
+    val selectedGraph = state.markerGraphFunctions.firstOrNull { it.selected }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = state.liveEquation,
-            onValueChange = onLiveEquation,
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("Function") },
-            placeholder = { Text("y = 2x + 3, y = |x|, y = a sin(bx + c) + d") },
-            textStyle = MaterialTheme.typography.titleMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
-        )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            item { RealGlassChip(label = "Add", selected = false, accent = arMathMint, onClick = onAddMarkerGraphFunction) }
-            items(listOf("y = x", "y = 2x + 3", "y = x^2", "y = x^3", "y = |x|", "y = sqrt(x)", "y = 1/x", "y = sin(x)", "y = cos(x)", "y = tan(x)", "y = log(x)", "y = e^x", "y = a sin(bx + c) + d", "x^2 + y^2 = r^2")) { expression ->
-                RealGlassChip(label = expression, selected = state.liveEquation == expression, accent = arMathMint, onClick = { onLiveEquation(expression) })
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Graph Workspace", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            listOf("Plot", "Sliders", "Trace").forEach { mode ->
+                RealGlassChip(mode, graphPanelMode == mode, if (mode == "Plot") arMathViolet else arMathCyan) { graphPanelMode = mode }
             }
         }
-        if (state.markerGraphFunctions.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                items(state.markerGraphFunctions) { graph ->
-                    RealGlassChip(
-                        label = if (graph.visible) graph.source else "${graph.source} off",
-                        selected = graph.selected,
-                        accent = markerGraphPaletteColor(graph.colorIndex),
-                        onClick = { onSelectMarkerGraphFunction(graph.id) }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            Column(modifier = Modifier.weight(1.12f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = state.liveEquation,
+                    onValueChange = onLiveEquation,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Function") },
+                    placeholder = { Text("y = x^2 - 2x - 1") },
+                    textStyle = MaterialTheme.typography.titleMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = onAddMarkerGraphFunction) { Text("Plot") }
+                    OutlinedButton(onClick = onMarkerGraphFit) { Text("Fit") }
+                    OutlinedButton(onClick = onMarkerGraphReset) { Text("Reset") }
+                }
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    items(listOf("y = x^2 - 2x - 1", "y = 2x + 3", "y = sin(x)", "y = |x|")) { expression ->
+                        RealGlassChip(expression, state.liveEquation == expression, markerGraphPaletteColor(if (expression.contains("2x + 3")) 1 else 0)) { onLiveEquation(expression) }
+                    }
+                }
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (state.markerGraphFunctions.isEmpty()) {
+                    Text("Add a function to draw it on G01.", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
+                }
+                state.markerGraphFunctions.forEach { graph ->
+                    MarkerGraphFunctionRow(
+                        graph = graph,
+                        onSelect = { onSelectMarkerGraphFunction(graph.id) },
+                        onToggleVisible = onToggleSelectedMarkerGraphVisibility
                     )
                 }
-                item { RealGlassChip(label = "Hide", selected = false, accent = Color(0xFFFFC857), onClick = onToggleSelectedMarkerGraphVisibility) }
-                item { RealGlassChip(label = "Copy", selected = false, accent = arMathCyan, onClick = onDuplicateSelectedMarkerGraphFunction) }
-                item { RealGlassChip(label = "Delete", selected = false, accent = Color(0xFFFF6B8A), onClick = onDeleteSelectedMarkerGraphFunction) }
             }
         }
-        state.markerGraphFunctions.firstOrNull { it.selected }?.takeIf { it.sliders.isNotEmpty() }?.let { graph ->
-            graph.sliders.forEach { slider ->
-                MarkerSlider(
-                    label = slider.symbol,
-                    value = slider.value.toFloat(),
-                    minValue = slider.minimum.toFloat(),
-                    maxValue = slider.maximum.toFloat(),
-                    onValue = { onMarkerGraphParameter(slider.symbol, it) }
-                )
+        when (graphPanelMode) {
+            "Sliders" -> {
+                if (selectedGraph?.sliders?.isNotEmpty() == true) {
+                    selectedGraph.sliders.forEach { slider ->
+                        MarkerSlider(
+                            label = slider.symbol.parameterLabel(),
+                            value = slider.value.toFloat(),
+                            minValue = slider.minimum.toFloat(),
+                            maxValue = slider.maximum.toFloat(),
+                            onValue = { onMarkerGraphParameter(slider.symbol, it) }
+                        )
+                    }
+                } else {
+                    Text("Selected graph has no parameters.", color = Color.White.copy(alpha = 0.68f), style = MaterialTheme.typography.labelMedium)
+                }
             }
-        }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            item { RealGlassChip(label = "Zoom +", selected = false, accent = arMathViolet, onClick = { onMarkerGraphZoom(0.75) }) }
-            item { RealGlassChip(label = "Zoom -", selected = false, accent = arMathViolet, onClick = { onMarkerGraphZoom(1.35) }) }
-            item { RealGlassChip(label = "Fit", selected = false, accent = arMathMint, onClick = onMarkerGraphFit) }
-            item { RealGlassChip(label = "Pan L", selected = false, accent = arMathCyan, onClick = { onMarkerGraphPan(-0.75, 0.0) }) }
-            item { RealGlassChip(label = "Pan R", selected = false, accent = arMathCyan, onClick = { onMarkerGraphPan(0.75, 0.0) }) }
-            item { RealGlassChip(label = "Trace", selected = state.markerGraphTraceMode == MarkerGraphTraceMode.Trace, accent = arMathMint, onClick = { onMarkerGraphTrace(MarkerGraphTraceMode.Trace) }) }
-            item { RealGlassChip(label = "Tangent", selected = state.markerGraphTraceMode == MarkerGraphTraceMode.Tangent, accent = arMathMint, onClick = { onMarkerGraphTrace(MarkerGraphTraceMode.Tangent) }) }
-            item { RealGlassChip(label = "Integral", selected = state.markerGraphTraceMode == MarkerGraphTraceMode.Integral, accent = arMathMint, onClick = { onMarkerGraphTrace(MarkerGraphTraceMode.Integral) }) }
-            items(GraphColorMap.entries.take(5)) { map ->
-                RealGlassChip(label = map.label(), selected = state.graphColorMap == map, accent = arMathCyan, onClick = { onGraphColorMap(map) })
+            "Trace" -> {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    item { RealGlassChip("Trace", state.markerGraphTraceMode == MarkerGraphTraceMode.Trace, arMathMint) { onMarkerGraphTrace(MarkerGraphTraceMode.Trace) } }
+                    item { RealGlassChip("Tangent", state.markerGraphTraceMode == MarkerGraphTraceMode.Tangent, arMathMint) { onMarkerGraphTrace(MarkerGraphTraceMode.Tangent) } }
+                    item { RealGlassChip("Integral", state.markerGraphTraceMode == MarkerGraphTraceMode.Integral, arMathMint) { onMarkerGraphTrace(MarkerGraphTraceMode.Integral) } }
+                    item { RealGlassChip("Derivative", state.markerGraphShowDerivative, arMathViolet, onToggleMarkerGraphDerivative) }
+                    item { RealGlassChip("Area", state.markerGraphShowIntegralArea, arMathViolet, onToggleMarkerGraphIntegralArea) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Trace", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.width(72.dp))
+                    Slider(value = state.markerGraphTraceProgress, onValueChange = onMarkerGraphTraceProgress, modifier = Modifier.weight(1f))
+                }
+                MarkerGraphSelectedSummary(state)
             }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Trace", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.width(72.dp))
-            Slider(value = state.markerGraphTraceProgress, onValueChange = onMarkerGraphTraceProgress, modifier = Modifier.weight(1f))
+            else -> {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    item { RealGlassChip("Grid", state.markerGraphShowGrid, arMathCyan, onToggleMarkerGraphGrid) }
+                    item { RealGlassChip("Labels", state.markerGraphShowLabels, arMathCyan, onToggleMarkerGraphLabels) }
+                    item { RealGlassChip("Intercepts", state.markerGraphShowIntercepts, arMathMint, onToggleMarkerGraphIntercepts) }
+                    item { RealGlassChip("Extrema", state.markerGraphShowExtrema, arMathMint, onToggleMarkerGraphExtrema) }
+                    item { RealGlassChip("Breaks", state.markerGraphShowDiscontinuities, Color(0xFFFFC857), onToggleMarkerGraphDiscontinuities) }
+                    item { RealGlassChip("Zoom +", false, arMathViolet) { onMarkerGraphZoom(0.75) } }
+                    item { RealGlassChip("Zoom -", false, arMathViolet) { onMarkerGraphZoom(1.35) } }
+                    item { RealGlassChip("Pan L", false, arMathCyan) { onMarkerGraphPan(-0.75, 0.0) } }
+                    item { RealGlassChip("Pan R", false, arMathCyan) { onMarkerGraphPan(0.75, 0.0) } }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Parameters", color = Color.White.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge)
+                        selectedGraph?.sliders?.take(3)?.forEach { slider ->
+                            MarkerSlider(
+                                label = slider.symbol,
+                                value = slider.value.toFloat(),
+                                minValue = slider.minimum.toFloat(),
+                                maxValue = slider.maximum.toFloat(),
+                                onValue = { onMarkerGraphParameter(slider.symbol, it) }
+                            )
+                        } ?: Text("No selected parameter sliders.", color = Color.White.copy(alpha = 0.62f), style = MaterialTheme.typography.labelSmall)
+                    }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Graph Tools", color = Color.White.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge)
+                        MarkerGraphDomainControls(
+                            state = state,
+                            onXMin = onMarkerGraphXMin,
+                            onXMax = onMarkerGraphXMax,
+                            onYMin = onMarkerGraphYMin,
+                            onYMax = onMarkerGraphYMax
+                        )
+                    }
+                    MarkerGraphInsightsPanel(state, Modifier.weight(1.15f))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun MarkerCoordinateToolTray(onMarker2dShape: (Marker2dShapeTool) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        items(listOf("Plot point" to Marker2dShapeTool.Point, "Join" to Marker2dShapeTool.Line, "Triangle" to Marker2dShapeTool.Triangle, "Polygon" to Marker2dShapeTool.Square, "Circle" to Marker2dShapeTool.Circle)) { (label, tool) ->
-            RealGlassChip(label = label, selected = false, accent = arMathCyan, onClick = { onMarker2dShape(tool) })
+private fun MarkerGraphFunctionRow(
+    graph: MarkerGraphFunctionState,
+    onSelect: () -> Unit,
+    onToggleVisible: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onSelect),
+        color = Color.White.copy(alpha = if (graph.selected) 0.13f else 0.06f),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, markerGraphPaletteColor(graph.colorIndex).copy(alpha = if (graph.selected) 0.8f else 0.32f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .width(28.dp)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(markerGraphPaletteColor(graph.colorIndex))
+            )
+            Text(
+                graph.source,
+                modifier = Modifier.weight(1f),
+                color = Color.White.copy(alpha = if (graph.visible) 0.95f else 0.45f),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1
+            )
+            Surface(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        onSelect()
+                        onToggleVisible()
+                    },
+                color = if (graph.visible) markerGraphPaletteColor(graph.colorIndex).copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, markerGraphPaletteColor(graph.colorIndex).copy(alpha = 0.7f))
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(if (graph.visible) "✓" else "", color = markerGraphPaletteColor(graph.colorIndex), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun MarkerGraphInsightsPanel(state: ArViewerUiState, modifier: Modifier = Modifier) {
+    val graphs = state.markerGraphFunctions.filter { it.visible && it.isValid && it.compiled.kind != GraphExpressionKind.ExplicitSurface3D }
+    val annotations = remember(graphs, state.arGraphDomain, state.markerGraphShowIntercepts, state.markerGraphShowExtrema) {
+        markerGraphAnnotations(graphs, state.arGraphDomain, true, true)
+    }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text("Graph Insights", color = Color.White.copy(alpha = 0.86f), style = MaterialTheme.typography.labelLarge)
+        if (graphs.isEmpty()) {
+            Text("Plot a function to see intercepts and intersections.", color = Color.White.copy(alpha = 0.62f), style = MaterialTheme.typography.labelSmall)
+        } else {
+            annotations.take(6).forEach { item ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    Box(
+                        Modifier
+                            .padding(top = 5.dp)
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(markerGraphPaletteColor(item.colorIndex))
+                    )
+                    Text(item.label.replace("\n", "  "), color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkerGraphDomainControls(
+    state: ArViewerUiState,
+    onXMin: (Float) -> Unit,
+    onXMax: (Float) -> Unit,
+    onYMin: (Float) -> Unit,
+    onYMax: (Float) -> Unit
+) {
+    val domain = state.arGraphDomain
+    MarkerSlider("x min", domain.xMin.toFloat(), -12f, 12f, onXMin)
+    MarkerSlider("x max", domain.xMax.toFloat(), -12f, 12f, onXMax)
+    MarkerSlider("y min", domain.yMin.toFloat(), -12f, 12f, onYMin)
+    MarkerSlider("y max", domain.yMax.toFloat(), -12f, 12f, onYMax)
+}
+
+@Composable
+private fun MarkerGraphSelectedSummary(state: ArViewerUiState) {
+    val selected = state.markerGraphFunctions.firstOrNull { it.selected }
+    val trace = markerTraceSummary(state, selected)
+    Text(
+        listOfNotNull(
+            selected?.source,
+            "x ${state.arGraphDomain.xMin.short()}..${state.arGraphDomain.xMax.short()}",
+            "y ${state.arGraphDomain.yMin.short()}..${state.arGraphDomain.yMax.short()}",
+            trace
+        ).joinToString("  |  "),
+        color = Color.White.copy(alpha = 0.78f),
+        style = MaterialTheme.typography.labelSmall,
+        maxLines = 2
+    )
+}
+
+@Composable
+private fun MarkerCoordinateToolTray(
+    state: ArViewerUiState,
+    onTool: (MarkerCoordinateTool) -> Unit,
+    onAddPoint: (Float, Float) -> Unit,
+    onSelectNext: () -> Unit,
+    onMovePoint: (Float, Float) -> Unit,
+    onSetPoint: (Float, Float) -> Unit,
+    onApplyTool: () -> Unit,
+    onSnap: () -> Unit,
+    onFormat: () -> Unit,
+    onSlopeTriangle: () -> Unit,
+    onTransform: (MarkerCoordinateTool, Float) -> Unit
+) {
+    var xText by remember { mutableStateOf("0") }
+    var yText by remember { mutableStateOf("0") }
+    val selected = state.markerCoordinateSelectedPointIds.mapNotNull { id -> state.markerCoordinatePoints.firstOrNull { it.id == id } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Coordinate plane: enter coordinates or tap G01",
+            style = MaterialTheme.typography.labelLarge,
+            color = arMathCyan
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(MarkerCoordinateTool.entries) { tool ->
+                RealGlassChip(label = tool.shortLabel(), selected = state.markerCoordinateTool == tool, accent = arMathCyan, onClick = { onTool(tool) })
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = xText,
+                onValueChange = { xText = it },
+                label = { Text("x") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = yText,
+                onValueChange = { yText = it },
+                label = { Text("y") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f)
+            )
+            Button(onClick = { onAddPoint(xText.toFloatOrNull() ?: 0f, yText.toFloatOrNull() ?: 0f) }) { Text("Add") }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip("Select", selected.isNotEmpty(), arMathViolet, onSelectNext) }
+            item { RealGlassChip("Apply", false, arMathMint, onApplyTool) }
+            item { RealGlassChip("Left", false, arMathCyan) { onMovePoint(-1f, 0f) } }
+            item { RealGlassChip("Right", false, arMathCyan) { onMovePoint(1f, 0f) } }
+            item { RealGlassChip("Up", false, arMathCyan) { onMovePoint(0f, 1f) } }
+            item { RealGlassChip("Down", false, arMathCyan) { onMovePoint(0f, -1f) } }
+            item { RealGlassChip("Set", false, arMathMint) { onSetPoint(xText.toFloatOrNull() ?: 0f, yText.toFloatOrNull() ?: 0f) } }
+            item { RealGlassChip("Snap Z", state.markerCoordinateSnapToInteger, Color(0xFFFFC857), onSnap) }
+            item { RealGlassChip("Fractions", state.markerCoordinateFractional, arMathMint, onFormat) }
+            item { RealGlassChip("Slope tri", state.markerCoordinateShowSlopeTriangle, arMathViolet, onSlopeTriangle) }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            item { RealGlassChip("Translate", false, arMathMint) { onTransform(MarkerCoordinateTool.Translation, 1f) } }
+            item { RealGlassChip("Reflect Y", false, arMathMint) { onTransform(MarkerCoordinateTool.Reflection, 1f) } }
+            item { RealGlassChip("Rotate 90", false, arMathMint) { onTransform(MarkerCoordinateTool.Rotation, 90f) } }
+            item { RealGlassChip("Dilate 2x", false, arMathMint) { onTransform(MarkerCoordinateTool.Dilation, 2f) } }
+            item { RealGlassChip("Dilate 1/2", false, arMathMint) { onTransform(MarkerCoordinateTool.Dilation, 0.5f) } }
+        }
+        MarkerCoordinateSummary(state)
     }
 }
 
@@ -3354,19 +5211,36 @@ private fun MarkerCoordinateToolTray(onMarker2dShape: (Marker2dShapeTool) -> Uni
 private fun MarkerTransformationToolTray(
     state: ArViewerUiState,
     onTool: (MarkerTransformationTool) -> Unit,
+    onShape: (MarkerTransformShape) -> Unit,
+    onSequenceStep: (MarkerTransformSequenceAction) -> Unit,
+    onClearSequence: () -> Unit,
     onProgress: (Float) -> Unit,
     onTranslationX: (Float) -> Unit,
     onTranslationY: (Float) -> Unit,
     onRotationDegrees: (Float) -> Unit,
+    onRotationCenterX: (Float) -> Unit,
+    onRotationCenterY: (Float) -> Unit,
     onRotationDirection: () -> Unit,
     onReflectionLine: (MarkerReflectionLine) -> Unit,
     onDilationScale: (Float) -> Unit,
+    onDilationCenterX: (Float) -> Unit,
+    onDilationCenterY: (Float) -> Unit,
     onHorizontalStretch: (Float) -> Unit,
     onVerticalStretch: (Float) -> Unit,
     onShear: (Float) -> Unit,
     onUndo: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(MarkerTransformShape.entries) { shape ->
+                RealGlassChip(
+                    label = shape.shortLabel(),
+                    selected = state.markerTransformShape == shape,
+                    accent = arMathMint,
+                    onClick = { onShape(shape) }
+                )
+            }
+        }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             items(MarkerTransformationTool.entries) { tool ->
                 RealGlassChip(
@@ -3378,12 +5252,25 @@ private fun MarkerTransformationToolTray(
             }
             item { RealGlassChip(label = "Undo", selected = false, accent = Color(0xFFFFC857), onClick = onUndo) }
         }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            items(MarkerTransformSequenceAction.entries) { action ->
+                RealGlassChip(
+                    label = action.shortLabel(),
+                    selected = state.markerTransformationSequence.any { it.action == action },
+                    accent = arMathCyan,
+                    onClick = { onSequenceStep(action) }
+                )
+            }
+            item { RealGlassChip(label = "Clear steps", selected = false, accent = Color(0xFFFF6B8A), onClick = onClearSequence) }
+        }
         when (state.markerTransformTool) {
             MarkerTransformationTool.Translation -> {
                 MarkerSlider("X", state.markerTranslationX, -0.3f, 0.3f, onTranslationX)
                 MarkerSlider("Y", state.markerTranslationY, -0.3f, 0.3f, onTranslationY)
             }
             MarkerTransformationTool.Rotation -> {
+                MarkerSlider("Center X", state.markerRotationCenterX, -0.3f, 0.3f, onRotationCenterX)
+                MarkerSlider("Center Y", state.markerRotationCenterY, -0.3f, 0.3f, onRotationCenterY)
                 MarkerSlider("Angle", state.markerRotationDegrees, -180f, 180f, onRotationDegrees)
                 RealGlassChip(
                     label = if (state.markerRotationClockwise) "Clockwise" else "Anticlockwise",
@@ -3404,11 +5291,17 @@ private fun MarkerTransformationToolTray(
                     }
                 }
             }
-            MarkerTransformationTool.Dilation -> MarkerSlider("Scale", state.markerDilationScale, 0.2f, 2.6f, onDilationScale)
+            MarkerTransformationTool.Dilation -> {
+                MarkerSlider("Center X", state.markerDilationCenterX, -0.3f, 0.3f, onDilationCenterX)
+                MarkerSlider("Center Y", state.markerDilationCenterY, -0.3f, 0.3f, onDilationCenterY)
+                MarkerSlider("Scale", state.markerDilationScale, 0.2f, 2.6f, onDilationScale)
+            }
             MarkerTransformationTool.HorizontalStretch -> MarkerSlider("Horizontal", state.markerHorizontalStretch, 0.2f, 2.8f, onHorizontalStretch)
             MarkerTransformationTool.VerticalStretch -> MarkerSlider("Vertical", state.markerVerticalStretch, 0.2f, 2.8f, onVerticalStretch)
             MarkerTransformationTool.Shear -> MarkerSlider("Shear", state.markerShear, -1.4f, 1.4f, onShear)
             MarkerTransformationTool.Composite -> {
+                MarkerSlider("Center X", state.markerRotationCenterX, -0.3f, 0.3f, onRotationCenterX)
+                MarkerSlider("Center Y", state.markerRotationCenterY, -0.3f, 0.3f, onRotationCenterY)
                 MarkerSlider("Rotation", state.markerRotationDegrees, -180f, 180f, onRotationDegrees)
                 MarkerSlider("Scale", state.markerDilationScale, 0.2f, 2.6f, onDilationScale)
                 MarkerSlider("X", state.markerTranslationX, -0.3f, 0.3f, onTranslationX)
@@ -3418,6 +5311,12 @@ private fun MarkerTransformationToolTray(
         Text(
             transformationMatrixLabel(state),
             color = arMathMint,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
+        Text(
+            transformationCoordinateSummary(state),
+            color = Color.White.copy(alpha = 0.76f),
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1
         )
@@ -3492,6 +5391,245 @@ private fun MarkerMathActivity.shortLabel(): String = when (this) {
     MarkerMathActivity.Trigonometry -> "Trig"
 }
 
+private fun Marker2dConstraintTool.shortLabel(): String = when (this) {
+    Marker2dConstraintTool.EqualLengths -> "Equal len"
+    Marker2dConstraintTool.EqualAngles -> "Equal ang"
+    Marker2dConstraintTool.Parallel -> "Parallel"
+    Marker2dConstraintTool.Perpendicular -> "Perp"
+    Marker2dConstraintTool.Horizontal -> "Horiz"
+    Marker2dConstraintTool.Vertical -> "Vert"
+    Marker2dConstraintTool.FixedRadius -> "Fix r"
+    Marker2dConstraintTool.FixedLength -> "Fix d"
+    Marker2dConstraintTool.PointOnLine -> "On line"
+    Marker2dConstraintTool.PointOnCircle -> "On circle"
+    Marker2dConstraintTool.Midpoint -> "Midpoint"
+    Marker2dConstraintTool.Tangency -> "Tangent"
+}
+
+private fun MarkerCoordinateTool.shortLabel(): String = when (this) {
+    MarkerCoordinateTool.PlotPoint -> "Plot"
+    MarkerCoordinateTool.PlotMultiplePoints -> "Multi"
+    MarkerCoordinateTool.JoinPoints -> "Join"
+    MarkerCoordinateTool.LineThroughTwoPoints -> "Line"
+    MarkerCoordinateTool.Midpoint -> "Midpoint"
+    MarkerCoordinateTool.Distance -> "Distance"
+    MarkerCoordinateTool.Slope -> "Slope"
+    MarkerCoordinateTool.SectionFormula -> "Section"
+    MarkerCoordinateTool.EquationOfLine -> "Equation"
+    MarkerCoordinateTool.ParallelLine -> "Parallel"
+    MarkerCoordinateTool.PerpendicularLine -> "Perp"
+    MarkerCoordinateTool.TriangleFromCoordinates -> "Triangle"
+    MarkerCoordinateTool.PolygonFromCoordinates -> "Polygon"
+    MarkerCoordinateTool.Reflection -> "Reflect"
+    MarkerCoordinateTool.Translation -> "Translate"
+    MarkerCoordinateTool.Rotation -> "Rotate"
+    MarkerCoordinateTool.Dilation -> "Dilate"
+}
+
+@Composable
+private fun MarkerCoordinateSummary(state: ArViewerUiState) {
+    val points = state.markerCoordinateSelectedPointIds.mapNotNull { id -> state.markerCoordinatePoints.firstOrNull { it.id == id } }
+    val allPointText = state.markerCoordinatePoints.takeLast(6).joinToString("  ") {
+        "${it.label}(${it.x.coordinateText(state.markerCoordinateFractional)}, ${it.y.coordinateText(state.markerCoordinateFractional)})"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (allPointText.isNotBlank()) {
+            Text(allPointText, style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.78f))
+        }
+        if (points.size >= 2) {
+            val a = points[points.size - 2]
+            val b = points.last()
+            val dx = b.x - a.x
+            val dy = b.y - a.y
+            val distance = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            val midpointX = (a.x + b.x) / 2f
+            val midpointY = (a.y + b.y) / 2f
+            val line = coordinateLineAnalysis(a, b)
+            Text(
+                "dx=${dx.coordinateText(state.markerCoordinateFractional)}  dy=${dy.coordinateText(state.markerCoordinateFractional)}  d=sqrt(dx^2+dy^2)=${distance.coordinateText(state.markerCoordinateFractional)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = arMathCyan
+            )
+            Text(
+                "M=((x1+x2)/2,(y1+y2)/2)=(${midpointX.coordinateText(state.markerCoordinateFractional)}, ${midpointY.coordinateText(state.markerCoordinateFractional)})  slope=${line.slope?.coordinateText(state.markerCoordinateFractional) ?: "undefined"}",
+                style = MaterialTheme.typography.labelMedium,
+                color = arMathMint
+            )
+            Text(
+                "${line.equation}  x-int=${line.xIntercept?.coordinateText(state.markerCoordinateFractional) ?: "--"}  y-int=${line.yIntercept?.coordinateText(state.markerCoordinateFractional) ?: "--"}",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFFFFC857)
+            )
+        }
+    }
+}
+
+private fun Float.coordinateText(fractional: Boolean): String {
+    if (!isFinite()) return "--"
+    if (fractional) return toSimpleFraction()
+    return when {
+        abs(this) >= 100 -> "%.0f".format(this)
+        abs(this) >= 10 -> "%.1f".format(this)
+        else -> "%.2f".format(this)
+    }.trimEnd('0').trimEnd('.')
+}
+
+private fun Float.toSimpleFraction(): String {
+    val sign = if (this < 0) "-" else ""
+    val value = abs(this)
+    val whole = value.toInt()
+    val fraction = value - whole
+    val denominators = listOf(2, 3, 4, 5, 8, 10)
+    val best = denominators.map { denominator -> denominator to kotlin.math.round(fraction * denominator).toInt() }
+        .minByOrNull { (denominator, numerator) -> abs(fraction - numerator.toFloat() / denominator) }
+    val numerator = best?.second ?: 0
+    val denominator = best?.first ?: 1
+    return when {
+        numerator == 0 -> "$sign$whole"
+        numerator == denominator -> "$sign${whole + 1}"
+        whole == 0 -> "$sign$numerator/$denominator"
+        else -> "$sign$whole $numerator/$denominator"
+    }
+}
+
+private fun Marker3dShapeTool.uiLabel(): String = when (this) {
+    Marker3dShapeTool.Cube -> "Cube"
+    Marker3dShapeTool.Cuboid -> "Cuboid"
+    Marker3dShapeTool.Sphere -> "Sphere"
+    Marker3dShapeTool.Hemisphere -> "Hemisphere"
+    Marker3dShapeTool.Cylinder -> "Cylinder"
+    Marker3dShapeTool.Cone -> "Cone"
+    Marker3dShapeTool.Pyramid -> "Pyramid"
+    Marker3dShapeTool.TriangularPrism -> "Triangular prism"
+    Marker3dShapeTool.RectangularPrism -> "Rectangular prism"
+    Marker3dShapeTool.Tetrahedron -> "Tetrahedron"
+    Marker3dShapeTool.Torus -> "Torus"
+    Marker3dShapeTool.Frustum -> "Frustum"
+    Marker3dShapeTool.CustomPrism -> "Custom prism"
+    Marker3dShapeTool.CustomPyramid -> "Custom pyramid"
+}
+
+private fun Marker3dShapeTool.uiId(): String = when (this) {
+    Marker3dShapeTool.Cube -> "cube"
+    Marker3dShapeTool.Cuboid -> "cuboid"
+    Marker3dShapeTool.Sphere -> "sphere"
+    Marker3dShapeTool.Hemisphere -> "hemisphere"
+    Marker3dShapeTool.Cylinder -> "cylinder"
+    Marker3dShapeTool.Cone -> "cone"
+    Marker3dShapeTool.Pyramid -> "pyramid"
+    Marker3dShapeTool.TriangularPrism -> "triangular-prism"
+    Marker3dShapeTool.RectangularPrism -> "rectangular-prism"
+    Marker3dShapeTool.Tetrahedron -> "tetrahedron"
+    Marker3dShapeTool.Torus -> "torus"
+    Marker3dShapeTool.Frustum -> "frustum"
+    Marker3dShapeTool.CustomPrism -> "custom-prism"
+    Marker3dShapeTool.CustomPyramid -> "custom-pyramid"
+}
+
+private fun Marker3dShapeTool.defaultUiParameters(): Map<String, Float> = when (this) {
+    Marker3dShapeTool.Cube -> mapOf("side" to 0.16f)
+    Marker3dShapeTool.Cuboid,
+    Marker3dShapeTool.RectangularPrism -> mapOf("length" to 0.22f, "width" to 0.14f, "height" to 0.16f)
+    Marker3dShapeTool.Sphere,
+    Marker3dShapeTool.Hemisphere,
+    Marker3dShapeTool.Torus -> mapOf("radius" to 0.1f)
+    Marker3dShapeTool.Cylinder,
+    Marker3dShapeTool.Cone,
+    Marker3dShapeTool.Frustum -> mapOf("radius" to 0.09f, "height" to 0.2f)
+    Marker3dShapeTool.Pyramid,
+    Marker3dShapeTool.CustomPyramid -> mapOf("base" to 0.2f, "height" to 0.2f)
+    Marker3dShapeTool.TriangularPrism -> mapOf("base" to 0.2f, "height" to 0.16f, "length" to 0.22f)
+    Marker3dShapeTool.Tetrahedron -> mapOf("side" to 0.18f)
+    Marker3dShapeTool.CustomPrism -> mapOf("base" to 0.18f, "height" to 0.16f, "length" to 0.24f)
+}
+
+private fun Marker3dOverlayOption.shortLabel(): String = when (this) {
+    Marker3dOverlayOption.Vertices -> "Vertices"
+    Marker3dOverlayOption.Edges -> "Edges"
+    Marker3dOverlayOption.Faces -> "Faces"
+    Marker3dOverlayOption.FaceNames -> "Face names"
+    Marker3dOverlayOption.Dimensions -> "Dims"
+    Marker3dOverlayOption.SurfaceArea -> "SA"
+    Marker3dOverlayOption.CurvedSurfaceArea -> "CSA"
+    Marker3dOverlayOption.TotalSurfaceArea -> "TSA"
+    Marker3dOverlayOption.Volume -> "Volume"
+    Marker3dOverlayOption.CrossSection -> "Section"
+    Marker3dOverlayOption.Net -> "Net"
+}
+
+private fun Marker3dSolidState.parameterRows(): List<Marker3dParameterRow> = when (tool) {
+    Marker3dShapeTool.Cube -> listOf(Marker3dParameterRow("side", "Side", 0.05f, 0.34f))
+    Marker3dShapeTool.Cuboid,
+    Marker3dShapeTool.RectangularPrism -> listOf(
+        Marker3dParameterRow("length", "Length", 0.06f, 0.42f),
+        Marker3dParameterRow("width", "Width", 0.04f, 0.34f),
+        Marker3dParameterRow("height", "Height", 0.05f, 0.42f)
+    )
+    Marker3dShapeTool.Sphere,
+    Marker3dShapeTool.Hemisphere,
+    Marker3dShapeTool.Torus -> listOf(Marker3dParameterRow("radius", "Radius", 0.04f, 0.22f))
+    Marker3dShapeTool.Cylinder,
+    Marker3dShapeTool.Cone,
+    Marker3dShapeTool.Frustum -> listOf(
+        Marker3dParameterRow("radius", "Radius", 0.04f, 0.22f),
+        Marker3dParameterRow("height", "Height", 0.06f, 0.44f)
+    )
+    Marker3dShapeTool.Pyramid,
+    Marker3dShapeTool.CustomPyramid -> listOf(
+        Marker3dParameterRow("base", "Base", 0.06f, 0.4f),
+        Marker3dParameterRow("height", "Height", 0.06f, 0.44f)
+    )
+    Marker3dShapeTool.TriangularPrism,
+    Marker3dShapeTool.CustomPrism -> listOf(
+        Marker3dParameterRow("base", "Base", 0.06f, 0.36f),
+        Marker3dParameterRow("height", "Base height", 0.05f, 0.32f),
+        Marker3dParameterRow("length", "Prism length", 0.08f, 0.44f)
+    )
+    Marker3dShapeTool.Tetrahedron -> listOf(Marker3dParameterRow("side", "Side", 0.06f, 0.34f))
+}
+
+private data class Marker3dParameterRow(val id: String, val label: String, val min: Float, val max: Float)
+
+private fun Marker3dSolidState.metricSummary(): String {
+    val d = dimensions()
+    val volume = when (tool) {
+        Marker3dShapeTool.Sphere -> 4f / 3f * PI.toFloat() * (d.width / 2f).pow3()
+        Marker3dShapeTool.Hemisphere -> 2f / 3f * PI.toFloat() * (d.width / 2f).pow3()
+        Marker3dShapeTool.Cylinder -> PI.toFloat() * (d.width / 2f).pow2() * d.height
+        Marker3dShapeTool.Cone,
+        Marker3dShapeTool.Pyramid,
+        Marker3dShapeTool.CustomPyramid -> d.width * d.depth * d.height / 3f
+        Marker3dShapeTool.TriangularPrism,
+        Marker3dShapeTool.CustomPrism -> d.width * d.height * d.depth / 2f
+        Marker3dShapeTool.Tetrahedron -> d.width.pow3() / 8.49f
+        Marker3dShapeTool.Torus -> 2f * PI.toFloat() * PI.toFloat() * (d.width / 2f) * (d.height / 6f).pow2()
+        Marker3dShapeTool.Frustum -> PI.toFloat() * d.height * ((d.width / 2f).pow2() + (d.width / 2f) * (d.width / 3f) + (d.width / 3f).pow2()) / 3f
+        else -> d.width * d.height * d.depth
+    }
+    val surface = 2f * (d.width * d.depth + d.width * d.height + d.depth * d.height)
+    return "V ${"%.1f".format(volume * 1_000_000)} cm3  SA ${"%.1f".format(surface * 10_000)} cm2"
+}
+
+private fun Float.pow2(): Float = this * this
+private fun Float.pow3(): Float = this * this * this
+
+@Composable
+private fun MarkerSliderRow(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    valueText: String,
+    onValueChange: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.72f))
+            Text(valueText, style = MaterialTheme.typography.labelSmall, color = arMathCyan)
+        }
+        Slider(value = value.coerceIn(valueRange.start, valueRange.endInclusive), onValueChange = onValueChange, valueRange = valueRange)
+    }
+}
+
 private fun markerGraphPaletteColor(index: Int): Color =
     listOf(
         Color(0xFF58F2C2),
@@ -3502,6 +5640,40 @@ private fun markerGraphPaletteColor(index: Int): Color =
         Color(0xFF74FF8B)
     )[index.floorMod(6)]
 
+private fun String.parameterLabel(): String = when (this) {
+    "a" -> "Amplitude a"
+    "b" -> "Frequency b"
+    "c" -> "Phase c"
+    "d" -> "Shift d"
+    "m" -> "Slope m"
+    "r" -> "Radius r"
+    "k" -> "k"
+    else -> this
+}
+
+private fun markerTraceSummary(state: ArViewerUiState, selected: MarkerGraphFunctionState?): String? {
+    selected ?: return null
+    val x = state.arGraphDomain.xMin + (state.arGraphDomain.xMax - state.arGraphDomain.xMin) * state.markerGraphTraceProgress
+    val y = arRenderMathEngine.evaluate2dUnclamped(selected.compiled, x)
+    if (!y.isFinite()) return "trace undefined"
+    val slope = state.arGraphAnalysis.tangent?.tangentSlope
+    return buildString {
+        append("P(${x.short()}, ${y.short()})")
+        append(" f(x)=${y.short()}")
+        if (state.markerGraphShowDerivative || state.markerGraphTraceMode == MarkerGraphTraceMode.Tangent) {
+            append(" slope=${slope?.short() ?: "--"}")
+        }
+    }
+}
+
+private fun Double.short(): String =
+    when {
+        !isFinite() -> "--"
+        abs(this) >= 100 -> "%.0f".format(this)
+        abs(this) >= 10 -> "%.1f".format(this)
+        else -> "%.2f".format(this)
+    }.trimEnd('0').trimEnd('.')
+
 private fun MarkerTransformationTool.shortLabel(): String = when (this) {
     MarkerTransformationTool.Translation -> "Translate"
     MarkerTransformationTool.Rotation -> "Rotate"
@@ -3511,6 +5683,22 @@ private fun MarkerTransformationTool.shortLabel(): String = when (this) {
     MarkerTransformationTool.VerticalStretch -> "V Stretch"
     MarkerTransformationTool.Shear -> "Shear"
     MarkerTransformationTool.Composite -> "Composite"
+}
+
+private fun MarkerTransformShape.shortLabel(): String = when (this) {
+    MarkerTransformShape.Point -> "Point"
+    MarkerTransformShape.Segment -> "Segment"
+    MarkerTransformShape.Triangle -> "Triangle"
+    MarkerTransformShape.Square -> "Square"
+    MarkerTransformShape.Rectangle -> "Rectangle"
+    MarkerTransformShape.Polygon -> "Polygon"
+    MarkerTransformShape.Circle -> "Circle"
+}
+
+private fun MarkerTransformSequenceAction.shortLabel(): String = when (this) {
+    MarkerTransformSequenceAction.Rotate90 -> "Rotate 90"
+    MarkerTransformSequenceAction.Translate32 -> "Translate (3,2)"
+    MarkerTransformSequenceAction.ReflectYAxis -> "Reflect Y"
 }
 
 private fun MarkerReflectionLine.shortLabel(): String = when (this) {
@@ -3529,14 +5717,30 @@ private fun sliderToRange(value: Float, minValue: Float, maxValue: Float): Float
 
 private fun transformationMatrixLabel(state: ArViewerUiState): String = when (state.markerTransformTool) {
     MarkerTransformationTool.Translation -> "T = [1 0 ${"%.2f".format(state.markerTranslationX)}; 0 1 ${"%.2f".format(state.markerTranslationY)}; 0 0 1]"
-    MarkerTransformationTool.Rotation -> "R(${state.markerRotationDegrees.toInt()} deg)"
+    MarkerTransformationTool.Rotation -> "R(${state.markerRotationDegrees.toInt()} deg) about (${state.markerRotationCenterX.coord()}, ${state.markerRotationCenterY.coord()})"
     MarkerTransformationTool.Reflection -> "Reflect over ${state.markerReflectionLine.shortLabel()}"
-    MarkerTransformationTool.Dilation -> "D = ${"%.2f".format(state.markerDilationScale)}I"
+    MarkerTransformationTool.Dilation -> "D = ${"%.2f".format(state.markerDilationScale)} about (${state.markerDilationCenterX.coord()}, ${state.markerDilationCenterY.coord()})"
     MarkerTransformationTool.HorizontalStretch -> "Sx = ${"%.2f".format(state.markerHorizontalStretch)}"
     MarkerTransformationTool.VerticalStretch -> "Sy = ${"%.2f".format(state.markerVerticalStretch)}"
     MarkerTransformationTool.Shear -> "H = [1 ${"%.2f".format(state.markerShear)}; 0 1]"
-    MarkerTransformationTool.Composite -> "Composite: rotate -> scale -> translate"
+    MarkerTransformationTool.Composite -> state.markerTransformationSequence
+        .ifEmpty {
+            listOf(
+                MarkerTransformationStepState(MarkerTransformSequenceAction.Rotate90, "Rotate 90 deg"),
+                MarkerTransformationStepState(MarkerTransformSequenceAction.Translate32, "Translate (3, 2)"),
+                MarkerTransformationStepState(MarkerTransformSequenceAction.ReflectYAxis, "Reflect Y-axis")
+            )
+        }
+        .joinToString(" -> ") { it.label }
 }
+
+private fun transformationCoordinateSummary(state: ArViewerUiState): String {
+    val before = markerTransformShapePoints(state.markerTransformShape).firstOrNull() ?: return ""
+    val after = before.transformedBy(state)
+    return "A (${before.x.coord()}, ${before.y.coord()}) -> A' (${after.x.coord()}, ${after.y.coord()})"
+}
+
+private fun Float.coord(): String = "%.2f".format(this)
 
 @Composable
 private fun QuietActionButton(label: String, contentDescription: String, onClick: () -> Unit) {

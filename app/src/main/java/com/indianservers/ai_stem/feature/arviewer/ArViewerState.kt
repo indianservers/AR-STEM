@@ -61,7 +61,73 @@ enum class Function3dTransformMode { Surface, Extrusion, SolidOfRevolution, Tang
 enum class MarkerMathActivity { Geometry2D, Geometry3D, FunctionGraph, CoordinateLab, Transformations, MeasurementLab, Trigonometry }
 enum class MarkerTransformationTool { Translation, Rotation, Reflection, Dilation, HorizontalStretch, VerticalStretch, Shear, Composite }
 enum class MarkerReflectionLine { XAxis, YAxis, YEqualsX, YEqualsNegativeX, UserLine }
+enum class MarkerTransformShape { Point, Segment, Triangle, Square, Rectangle, Polygon, Circle }
+enum class MarkerTransformSequenceAction { Rotate90, Translate32, ReflectYAxis }
 enum class MarkerGraphTraceMode { Off, Trace, Tangent, Integral }
+enum class Marker3dShapeTool {
+    Cube,
+    Cuboid,
+    Sphere,
+    Hemisphere,
+    Cylinder,
+    Cone,
+    Pyramid,
+    TriangularPrism,
+    RectangularPrism,
+    Tetrahedron,
+    Torus,
+    Frustum,
+    CustomPrism,
+    CustomPyramid
+}
+enum class Marker3dOverlayOption {
+    Vertices,
+    Edges,
+    Faces,
+    FaceNames,
+    Dimensions,
+    SurfaceArea,
+    CurvedSurfaceArea,
+    TotalSurfaceArea,
+    Volume,
+    CrossSection,
+    Net
+}
+enum class Marker3dSectionMode { None, Horizontal, Vertical }
+enum class MarkerCoordinateTool {
+    PlotPoint,
+    PlotMultiplePoints,
+    JoinPoints,
+    LineThroughTwoPoints,
+    Midpoint,
+    Distance,
+    Slope,
+    SectionFormula,
+    EquationOfLine,
+    ParallelLine,
+    PerpendicularLine,
+    TriangleFromCoordinates,
+    PolygonFromCoordinates,
+    Reflection,
+    Translation,
+    Rotation,
+    Dilation
+}
+enum class MarkerCoordinateShapeKind { Segment, Line, Triangle, Polygon, Parallel, Perpendicular }
+enum class Marker2dConstraintTool {
+    EqualLengths,
+    EqualAngles,
+    Parallel,
+    Perpendicular,
+    Horizontal,
+    Vertical,
+    FixedRadius,
+    FixedLength,
+    PointOnLine,
+    PointOnCircle,
+    Midpoint,
+    Tangency
+}
 enum class ArFeaturePhase { DirectInteraction, GraphAnalysis, EngineStrengthening, WorkflowStudio }
 enum class MarkerLessonElementKind { Point, Line, Segment, Ray, Plane, Angle, Shape2d, Circle, Triangle, Transform, Algebra, Coordinate, FunctionGraph, Measurement2d, Solid3d }
 enum class MathArFeature {
@@ -138,6 +204,53 @@ data class MarkerGraphFunctionState(
         get() = compiled.isValid
 }
 
+data class MarkerTransformationStepState(
+    val action: MarkerTransformSequenceAction,
+    val label: String
+)
+
+data class Marker2dPointState(
+    val x: Float,
+    val y: Float
+)
+
+data class Marker3dSolidState(
+    val id: String,
+    val tool: Marker3dShapeTool,
+    val label: String,
+    val x: Float = 0f,
+    val z: Float = 0f,
+    val lift: Float = 0.08f,
+    val scale: Float = 1f,
+    val rotationX: Float = 0f,
+    val rotationY: Float = 0f,
+    val rotationZ: Float = 0f,
+    val parameters: Map<String, Float> = emptyMap(),
+    val selected: Boolean = true,
+    val visible: Boolean = true,
+    val locked: Boolean = false,
+    val exploded: Boolean = false,
+    val sectionMode: Marker3dSectionMode = Marker3dSectionMode.None,
+    val clipping: Float = 0.5f,
+    val showNet: Boolean = false
+)
+
+data class MarkerCoordinatePointState(
+    val id: String,
+    val label: String,
+    val x: Float,
+    val y: Float,
+    val selected: Boolean = false
+)
+
+data class MarkerCoordinateShapeState(
+    val id: String,
+    val label: String,
+    val kind: MarkerCoordinateShapeKind,
+    val pointIds: List<String>,
+    val visible: Boolean = true
+)
+
 data class ArPointLabel(
     val label: String,
     val x: Float,
@@ -213,12 +326,18 @@ data class ArViewerUiState(
     val markerLessonInteraction: MarkerLessonInteractionState = MarkerLessonInteractionState(),
     val markerMathActivity: MarkerMathActivity = MarkerMathActivity.Geometry2D,
     val markerTransformTool: MarkerTransformationTool = MarkerTransformationTool.Translation,
+    val markerTransformShape: MarkerTransformShape = MarkerTransformShape.Triangle,
+    val markerTransformationSequence: List<MarkerTransformationStepState> = emptyList(),
     val markerTransformProgress: Float = 1f,
     val markerTranslationX: Float = 0.16f,
     val markerTranslationY: Float = 0.1f,
+    val markerRotationCenterX: Float = 0f,
+    val markerRotationCenterY: Float = 0f,
     val markerRotationDegrees: Float = 45f,
     val markerRotationClockwise: Boolean = false,
     val markerReflectionLine: MarkerReflectionLine = MarkerReflectionLine.YAxis,
+    val markerDilationCenterX: Float = 0f,
+    val markerDilationCenterY: Float = 0f,
     val markerDilationScale: Float = 1.4f,
     val markerHorizontalStretch: Float = 1.4f,
     val markerVerticalStretch: Float = 0.7f,
@@ -274,6 +393,37 @@ data class ArViewerUiState(
     val markerGraphShowDiscontinuities: Boolean = true,
     val markerGraphShowDerivative: Boolean = false,
     val markerGraphShowIntegralArea: Boolean = false,
+    val marker2dActiveTool: Marker2dShapeTool? = null,
+    val marker2dDraftPoints: List<Marker2dPointState> = emptyList(),
+    val marker2dSelectedObjectId: String? = null,
+    val marker2dShowLabels: Boolean = true,
+    val marker2dShowVertices: Boolean = true,
+    val marker2dShowMeasurements: Boolean = true,
+    val marker2dSnapToGrid: Boolean = true,
+    val marker2dSnapToPoints: Boolean = false,
+    val marker2dLockShape: Boolean = false,
+    val marker2dShowConstructionLines: Boolean = true,
+    val marker2dActiveConstraint: Marker2dConstraintTool? = null,
+    val marker3dPreviewTool: Marker3dShapeTool? = null,
+    val marker3dPreviewX: Float = 0f,
+    val marker3dPreviewZ: Float = 0f,
+    val marker3dPreviewLift: Float = 0.08f,
+    val marker3dSolids: List<Marker3dSolidState> = emptyList(),
+    val marker3dSelectedSolidId: String? = null,
+    val marker3dOverlays: Set<Marker3dOverlayOption> = setOf(
+        Marker3dOverlayOption.Edges,
+        Marker3dOverlayOption.Vertices,
+        Marker3dOverlayOption.Dimensions,
+        Marker3dOverlayOption.Volume
+    ),
+    val markerCoordinateTool: MarkerCoordinateTool = MarkerCoordinateTool.PlotPoint,
+    val markerCoordinatePoints: List<MarkerCoordinatePointState> = emptyList(),
+    val markerCoordinateShapes: List<MarkerCoordinateShapeState> = emptyList(),
+    val markerCoordinateSelectedPointIds: List<String> = emptyList(),
+    val markerCoordinateSelectedShapeId: String? = null,
+    val markerCoordinateSnapToInteger: Boolean = true,
+    val markerCoordinateFractional: Boolean = false,
+    val markerCoordinateShowSlopeTriangle: Boolean = true,
     val advancedCapabilityReport: ArAdvancedCapabilityReport = ArAdvancedMathTools.evaluate(
         equationKind = GraphExpressionKind.Explicit2D,
         hasAnalysis = false,
