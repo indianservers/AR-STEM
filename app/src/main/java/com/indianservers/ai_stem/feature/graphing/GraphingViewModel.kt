@@ -1,6 +1,7 @@
 package com.indianservers.ai_stem.feature.graphing
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.indianservers.ai_stem.data.graph.CsvParseResult
 import com.indianservers.ai_stem.data.graph.GraphCsvCodec
@@ -10,6 +11,9 @@ import com.indianservers.ai_stem.domain.graph.GraphAnalysisEngine
 import com.indianservers.ai_stem.domain.graph.GraphCurve
 import com.indianservers.ai_stem.domain.graph.GraphExpression
 import com.indianservers.ai_stem.domain.graph.GraphExpressionKind
+import com.indianservers.ai_stem.domain.graph.GraphEquationInsight
+import com.indianservers.ai_stem.domain.graph.GraphFeaturePoint
+import com.indianservers.ai_stem.domain.graph.GraphInsightsEngine
 import com.indianservers.ai_stem.domain.graph.GraphProject
 import com.indianservers.ai_stem.domain.graph.GraphRenderPrimitive
 import com.indianservers.ai_stem.domain.graph.GraphRenderPrimitiveBuilder
@@ -17,7 +21,11 @@ import com.indianservers.ai_stem.domain.graph.GraphRenderMode
 import com.indianservers.ai_stem.domain.graph.GraphSampler
 import com.indianservers.ai_stem.domain.graph.GraphSamples
 import com.indianservers.ai_stem.domain.graph.GraphStyle
+import com.indianservers.ai_stem.domain.graph.GraphSlider
 import com.indianservers.ai_stem.domain.graph.ParseOutcome
+import com.indianservers.ai_stem.domain.graph.GraphViewport
+import com.indianservers.ai_stem.data.workspace.WorkspacePreferencesRepository
+import com.indianservers.ai_stem.domain.workspace.WorkspaceEnvironmentMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +50,7 @@ data class GraphingUiState(
     val project: GraphProject = GraphSamples.starterProject(),
     val renderMode: GraphRenderMode = GraphRenderMode.Screen,
     val expressionText: String = "y = x^2",
+    val workspaceMode: WorkspaceEnvironmentMode = WorkspaceEnvironmentMode.White,
     val experienceMode: GraphingExperienceMode = GraphingExperienceMode.Beginner,
     val beginnerMode: Boolean = true,
     val curves: List<GraphCurve> = emptyList(),
@@ -50,23 +59,43 @@ data class GraphingUiState(
     val pickCandidates: List<GraphPickCandidate> = emptyList(),
     val showObjectChooser: Boolean = false,
     val traceX: Double = 0.0,
+    val showGrid: Boolean = true,
+    val showLabels: Boolean = true,
+    val traceEnabled: Boolean = false,
+    val equationInsights: List<GraphEquationInsight> = emptyList(),
+    val intersections: List<GraphFeaturePoint> = emptyList(),
     val analysisSummary: String = "Add a graph to begin.",
     val updating: Boolean = false,
     val userMessage: String? = null
 )
 
-class GraphingViewModel : ViewModel() {
+class GraphingViewModel(application: Application) : AndroidViewModel(application) {
     private val sampler = GraphSampler()
     private val analysis = GraphAnalysisEngine()
     private val primitiveBuilder = GraphRenderPrimitiveBuilder()
     private val csvCodec = GraphCsvCodec()
     private val pngExporter = GraphPngExporter()
+    private val insightsEngine = GraphInsightsEngine()
+    private val preferences = WorkspacePreferencesRepository(application)
     private var computeJob: Job? = null
     private val _uiState = MutableStateFlow(GraphingUiState())
     val uiState: StateFlow<GraphingUiState> = _uiState
 
     init {
+        viewModelScope.launch {
+            preferences.environmentMode.collect { mode ->
+                if (mode != WorkspaceEnvironmentMode.AR) {
+                    _uiState.update { it.copy(workspaceMode = mode, renderMode = GraphRenderMode.Screen) }
+                }
+            }
+        }
         recompute()
+    }
+
+    fun setWorkspaceMode(mode: WorkspaceEnvironmentMode) {
+        if (mode == WorkspaceEnvironmentMode.AR) return
+        _uiState.update { it.copy(workspaceMode = mode, renderMode = GraphRenderMode.Screen) }
+        viewModelScope.launch { preferences.setEnvironmentMode(mode) }
     }
 
     fun setExpressionText(value: String) {
@@ -137,8 +166,13 @@ class GraphingViewModel : ViewModel() {
             return
         }
         _uiState.update {
+            val newSliders = detectedSliders(parsed, it.project.sliders)
             it.copy(
-                project = it.project.copy(expressions = it.project.expressions + parsed, modifiedAt = System.currentTimeMillis()),
+                project = it.project.copy(
+                    expressions = it.project.expressions + parsed,
+                    sliders = it.project.sliders + newSliders,
+                    modifiedAt = System.currentTimeMillis()
+                ),
                 selectedExpressionId = parsed.id,
                 userMessage = "Graph added"
             )
@@ -153,6 +187,36 @@ class GraphingViewModel : ViewModel() {
     fun deleteExpression(id: String) {
         _uiState.update {
             it.copy(project = it.project.copy(expressions = it.project.expressions.filterNot { expr -> expr.id == id }))
+        }
+        recompute()
+    }
+
+    fun duplicateExpression(id: String) {
+        val source = _uiState.value.project.expressions.firstOrNull { it.id == id } ?: return
+        val copy = source.copy(
+            id = "expr-${System.currentTimeMillis()}",
+            displayName = "${source.displayName} copy",
+            style = source.style.copy(color = palette[_uiState.value.project.expressions.size % palette.size])
+        )
+        _uiState.update { it.copy(project = it.project.copy(expressions = it.project.expressions + copy), selectedExpressionId = copy.id) }
+        recompute()
+    }
+
+    fun editExpression(id: String) {
+        val expression = _uiState.value.project.expressions.firstOrNull { it.id == id } ?: return
+        _uiState.update { it.copy(selectedExpressionId = id, expressionText = expression.source) }
+    }
+
+    fun replaceSelectedExpression() {
+        val id = _uiState.value.selectedExpressionId ?: return addExpression()
+        val current = _uiState.value.project.expressions.firstOrNull { it.id == id } ?: return addExpression()
+        val parsed = sampler.parseExpression(current.copy(source = _uiState.value.expressionText))
+        if (parsed.parse is ParseOutcome.Failure) {
+            _uiState.update { it.copy(userMessage = parsed.parse.message) }
+            return
+        }
+        _uiState.update { state ->
+            state.copy(project = state.project.copy(expressions = state.project.expressions.map { if (it.id == id) parsed else it }))
         }
         recompute()
     }
@@ -223,6 +287,57 @@ class GraphingViewModel : ViewModel() {
         updateAnalysis()
     }
 
+    fun toggleGrid() = _uiState.update { it.copy(showGrid = !it.showGrid) }
+    fun toggleLabels() = _uiState.update { it.copy(showLabels = !it.showLabels) }
+    fun toggleTrace() = _uiState.update { it.copy(traceEnabled = !it.traceEnabled) }
+
+    fun panViewport(deltaXFraction: Double, deltaYFraction: Double) {
+        _uiState.update { state ->
+            val viewport = state.project.viewport
+            val dx = (viewport.xMax - viewport.xMin) * deltaXFraction
+            val dy = (viewport.yMax - viewport.yMin) * deltaYFraction
+            state.copy(project = state.project.copy(viewport = viewport.copy(
+                xMin = viewport.xMin - dx,
+                xMax = viewport.xMax - dx,
+                yMin = viewport.yMin + dy,
+                yMax = viewport.yMax + dy
+            )))
+        }
+        recompute()
+    }
+
+    fun zoomViewport(scale: Double, focusXFraction: Double = 0.5, focusYFraction: Double = 0.5) {
+        if (!scale.isFinite() || scale <= 0.0) return
+        _uiState.update { state ->
+            val viewport = state.project.viewport
+            val bounded = scale.coerceIn(0.5, 2.0)
+            val xFocus = viewport.xMin + (viewport.xMax - viewport.xMin) * focusXFraction
+            val yFocus = viewport.yMax - (viewport.yMax - viewport.yMin) * focusYFraction
+            val left = (xFocus - viewport.xMin) / bounded
+            val right = (viewport.xMax - xFocus) / bounded
+            val bottom = (yFocus - viewport.yMin) / bounded
+            val top = (viewport.yMax - yFocus) / bounded
+            state.copy(project = state.project.copy(viewport = GraphViewport(
+                xMin = xFocus - left,
+                xMax = xFocus + right,
+                yMin = yFocus - bottom,
+                yMax = yFocus + top,
+                zMin = viewport.zMin,
+                zMax = viewport.zMax
+            )))
+        }
+        recompute()
+    }
+
+    fun setSliderValue(id: String, value: Double) {
+        _uiState.update { state ->
+            state.copy(project = state.project.copy(sliders = state.project.sliders.map { slider ->
+                if (slider.id == id) slider.copy(value = value.coerceIn(slider.minimum, slider.maximum)) else slider
+            }))
+        }
+        recompute()
+    }
+
     fun resetView() {
         _uiState.update { it.copy(project = it.project.copy(viewport = com.indianservers.ai_stem.domain.graph.GraphViewport())) }
         recompute()
@@ -273,14 +388,32 @@ class GraphingViewModel : ViewModel() {
             _uiState.update { it.copy(updating = true) }
             val state = _uiState.value
             val curves = withContext(Dispatchers.Default) {
+                val variables = state.project.sliders.associate { it.symbol to it.value }
                 state.project.expressions.filter { it.visible }.flatMap { expression ->
-                    sampler.sampleExpression(expression, state.project.viewport, state.project.appearance.qualityPreset)
+                    sampler.sampleExpression(expression, state.project.viewport, state.project.appearance.qualityPreset, variables)
                 }
             }
             val primitives = withContext(Dispatchers.Default) {
                 primitiveBuilder.fromCurves(curves, state.project.expressions, System.currentTimeMillis())
             }
-            _uiState.update { it.copy(curves = curves, renderPrimitives = primitives, updating = false) }
+            val visibleExpressions = state.project.expressions.filter { it.visible && it.kind == GraphExpressionKind.Explicit2D }
+            val equationInsights = withContext(Dispatchers.Default) { visibleExpressions.mapNotNull(insightsEngine::analyze) }
+            val intersections = withContext(Dispatchers.Default) {
+                visibleExpressions.indices.flatMap { firstIndex ->
+                    ((firstIndex + 1) until visibleExpressions.size).flatMap { secondIndex ->
+                        insightsEngine.intersections(visibleExpressions[firstIndex], visibleExpressions[secondIndex])
+                    }
+                }
+            }
+            _uiState.update {
+                it.copy(
+                    curves = curves,
+                    renderPrimitives = primitives,
+                    equationInsights = equationInsights,
+                    intersections = intersections,
+                    updating = false
+                )
+            }
             updateAnalysis()
         }
     }
@@ -330,6 +463,16 @@ class GraphingViewModel : ViewModel() {
     private fun nextCandidate(currentId: String?, candidates: List<GraphPickCandidate>): GraphPickCandidate {
         val index = candidates.indexOfFirst { it.id == currentId }
         return candidates[(index + 1).floorMod(candidates.size)]
+    }
+
+    private fun detectedSliders(expression: GraphExpression, existing: List<GraphSlider>): List<GraphSlider> {
+        val parsed = expression.parse as? ParseOutcome.Success ?: return emptyList()
+        val reserved = setOf("x", "y", "z", "t", "theta", "pi", "e", "phi")
+        val existingSymbols = existing.mapTo(mutableSetOf()) { it.symbol }
+        return parsed.variables
+            .filterNot { it in reserved || it in existingSymbols }
+            .sorted()
+            .map { symbol -> GraphSlider("slider-$symbol", symbol, -10.0, 10.0, 0.1, 1.0) }
     }
 
     companion object {

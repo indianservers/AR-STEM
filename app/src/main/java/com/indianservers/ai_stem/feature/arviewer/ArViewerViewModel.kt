@@ -404,7 +404,12 @@ class ArViewerViewModel : ViewModel() {
     fun onMarker2dWorkspaceTap(x: Float, y: Float) {
         _uiState.update { state ->
             val tool = state.marker2dActiveTool ?: return@update state.selectNearestMarker2dObject(x, y)
-            val snapped = state.snapMarker2dPoint(Marker2dPointState(x, y))
+            val snapped = state.snapMarker2dPoint(
+                Marker2dPointState(
+                    x.coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT),
+                    y.coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT)
+                )
+            )
             val draft = state.marker2dDraftPoints + snapped
             val shouldFinish = tool.fixedPointCount()?.let { draft.size >= it } == true
             if (shouldFinish) {
@@ -472,7 +477,7 @@ class ArViewerViewModel : ViewModel() {
             val moved = state.constructionGeometry.copy(
                 points = state.constructionGeometry.points.map { point ->
                     if (point.id in selected.pointIds) {
-                        point.copy(position = point.position.plus(Vector3Value(dx.toDouble(), 0.0, dy.toDouble())))
+                        point.copy(position = point.position.plus(Vector3Value(dx.toDouble(), 0.0, dy.toDouble())).clampToMarker())
                     } else point
                 },
                 revision = state.constructionGeometry.revision + 1
@@ -499,7 +504,7 @@ class ArViewerViewModel : ViewModel() {
                                 center.x + px * kotlin.math.cos(angle) - pz * kotlin.math.sin(angle),
                                 point.position.y,
                                 center.z + px * kotlin.math.sin(angle) + pz * kotlin.math.cos(angle)
-                            )
+                            ).clampToMarker()
                         )
                     } else point
                 },
@@ -524,7 +529,7 @@ class ArViewerViewModel : ViewModel() {
                                 center.x + (point.position.x - center.x) * factor,
                                 point.position.y,
                                 center.z + (point.position.z - center.z) * factor
-                            )
+                            ).clampToMarker()
                         )
                     } else point
                 },
@@ -538,13 +543,13 @@ class ArViewerViewModel : ViewModel() {
         _uiState.update { state ->
             val selected = state.selectedMarker2dObject() ?: return@update state
             val sourcePoints = selected.pointIds.mapNotNull { state.constructionGeometry.pointMap[it] }
-            val offset = Vector3Value(0.045, 0.0, 0.045)
+            val offset = Vector3Value(0.018, 0.0, 0.018)
             val base = System.currentTimeMillis()
             val copiedPoints = sourcePoints.mapIndexed { index, point ->
                 point.copy(
                     id = "marker-copy-$base-$index",
                     label = "${point.label}'",
-                    position = point.position.plus(offset)
+                    position = point.position.plus(offset).clampToMarker()
                 )
             }
             val copied = selected.copy(
@@ -644,8 +649,8 @@ class ArViewerViewModel : ViewModel() {
             it.copy(
                 markerMathActivity = MarkerMathActivity.Geometry3D,
                 marker3dPreviewTool = tool,
-                marker3dPreviewX = ((it.marker3dSolids.size % 3) - 1) * 0.16f,
-                marker3dPreviewZ = (it.marker3dSolids.size / 3) * 0.14f,
+                marker3dPreviewX = ((it.marker3dSolids.size % 3) - 1) * 0.032f,
+                marker3dPreviewZ = ((it.marker3dSolids.size / 3) % 3 - 1) * 0.032f,
                 marker3dPreviewLift = tool.defaultLift(),
                 userMessage = UiMessage("${tool.label()}: preview ready. Tap G01 or press Place.")
             )
@@ -685,7 +690,7 @@ class ArViewerViewModel : ViewModel() {
     }
 
     fun moveMarker3dPreview(dx: Float, dz: Float) {
-        _uiState.update { it.copy(marker3dPreviewX = (it.marker3dPreviewX + dx).coerceIn(-0.34f, 0.34f), marker3dPreviewZ = (it.marker3dPreviewZ + dz).coerceIn(-0.34f, 0.34f)) }
+        _uiState.update { it.copy(marker3dPreviewX = (it.marker3dPreviewX + dx).coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT), marker3dPreviewZ = (it.marker3dPreviewZ + dz).coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT)) }
     }
 
     fun selectNextMarker3dSolid() {
@@ -705,7 +710,11 @@ class ArViewerViewModel : ViewModel() {
     fun moveSelectedMarker3dSolid(dx: Float, dz: Float, dy: Float = 0f) {
         _uiState.update { state ->
             state.updateSelectedMarker3dSolid { solid ->
-                solid.copy(x = (solid.x + dx).coerceIn(-0.4f, 0.4f), z = (solid.z + dz).coerceIn(-0.4f, 0.4f), lift = (solid.lift + dy).coerceIn(0.02f, 0.5f))
+                solid.copy(
+                    x = (solid.x + dx).coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT),
+                    z = (solid.z + dz).coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT),
+                    lift = (solid.lift + dy).coerceIn(0.004f, 0.03f)
+                )
             }
         }
     }
@@ -724,14 +733,14 @@ class ArViewerViewModel : ViewModel() {
 
     fun scaleSelectedMarker3dSolid(factor: Float) {
         _uiState.update { state ->
-            state.updateSelectedMarker3dSolid { solid -> solid.copy(scale = (solid.scale * factor).coerceIn(0.35f, 2.8f)) }
+            state.updateSelectedMarker3dSolid { solid -> solid.copy(scale = (solid.scale * factor).coerceIn(0.35f, 1.35f)) }
         }
     }
 
     fun updateSelectedMarker3dParameter(parameterId: String, value: Float) {
         _uiState.update { state ->
             state.updateSelectedMarker3dSolid { solid ->
-                solid.copy(parameters = solid.parameters + (parameterId to value.coerceIn(0.02f, 1.0f)))
+                solid.copy(parameters = solid.parameters + (parameterId to value.coerceIn(0.015f, 0.12f)))
             }
         }
     }
@@ -742,8 +751,8 @@ class ArViewerViewModel : ViewModel() {
             val copy = selected.copy(
                 id = "marker-solid-${System.currentTimeMillis()}",
                 label = "${selected.label} copy",
-                x = (selected.x + 0.08f).coerceIn(-0.34f, 0.34f),
-                z = (selected.z + 0.08f).coerceIn(-0.34f, 0.34f),
+                x = (selected.x + 0.022f).coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT),
+                z = (selected.z + 0.022f).coerceIn(-MARKER_SAFE_HALF_EXTENT, MARKER_SAFE_HALF_EXTENT),
                 selected = true,
                 locked = false,
                 visible = true
@@ -2737,28 +2746,28 @@ private fun Marker3dShapeTool.defaultLift(): Float = when (this) {
     Marker3dShapeTool.Cuboid,
     Marker3dShapeTool.RectangularPrism,
     Marker3dShapeTool.TriangularPrism,
-    Marker3dShapeTool.CustomPrism -> 0.1f
+    Marker3dShapeTool.CustomPrism -> 0.004f
     Marker3dShapeTool.Sphere,
     Marker3dShapeTool.Hemisphere,
-    Marker3dShapeTool.Torus -> 0.12f
-    else -> 0.11f
+    Marker3dShapeTool.Torus -> 0.004f
+    else -> 0.004f
 }
 
 private fun Marker3dShapeTool.defaultParameters(): Map<String, Float> = when (this) {
-    Marker3dShapeTool.Cube -> mapOf("side" to 0.16f)
+    Marker3dShapeTool.Cube -> mapOf("side" to 0.065f)
     Marker3dShapeTool.Cuboid,
-    Marker3dShapeTool.RectangularPrism -> mapOf("length" to 0.22f, "width" to 0.14f, "height" to 0.16f)
+    Marker3dShapeTool.RectangularPrism -> mapOf("length" to 0.085f, "width" to 0.055f, "height" to 0.065f)
     Marker3dShapeTool.Sphere,
     Marker3dShapeTool.Hemisphere,
-    Marker3dShapeTool.Torus -> mapOf("radius" to 0.1f)
+    Marker3dShapeTool.Torus -> mapOf("radius" to 0.034f)
     Marker3dShapeTool.Cylinder,
     Marker3dShapeTool.Cone,
-    Marker3dShapeTool.Frustum -> mapOf("radius" to 0.09f, "height" to 0.2f)
+    Marker3dShapeTool.Frustum -> mapOf("radius" to 0.032f, "height" to 0.075f)
     Marker3dShapeTool.Pyramid,
-    Marker3dShapeTool.CustomPyramid -> mapOf("base" to 0.2f, "height" to 0.2f)
-    Marker3dShapeTool.TriangularPrism -> mapOf("base" to 0.2f, "height" to 0.16f, "length" to 0.22f)
-    Marker3dShapeTool.Tetrahedron -> mapOf("side" to 0.18f)
-    Marker3dShapeTool.CustomPrism -> mapOf("base" to 0.18f, "height" to 0.16f, "length" to 0.24f)
+    Marker3dShapeTool.CustomPyramid -> mapOf("base" to 0.075f, "height" to 0.08f)
+    Marker3dShapeTool.TriangularPrism -> mapOf("base" to 0.07f, "height" to 0.06f, "length" to 0.085f)
+    Marker3dShapeTool.Tetrahedron -> mapOf("side" to 0.075f)
+    Marker3dShapeTool.CustomPrism -> mapOf("base" to 0.07f, "height" to 0.06f, "length" to 0.09f)
 }
 
 private fun ArViewerUiState.placeMarker3dPreview(): ArViewerUiState {
@@ -2989,12 +2998,20 @@ private fun ArViewerUiState.snapMarker2dPoint(point: Marker2dPointState): Marker
         }
     }
     if (!marker2dSnapToGrid) return point
-    val step = 0.04f
+    val step = 0.01f
     return Marker2dPointState(
         x = kotlin.math.round(point.x / step) * step,
         y = kotlin.math.round(point.y / step) * step
     )
 }
+
+private const val MARKER_SAFE_HALF_EXTENT = 0.058f
+
+private fun Vector3Value.clampToMarker(): Vector3Value = Vector3Value(
+    x.coerceIn(-MARKER_SAFE_HALF_EXTENT.toDouble(), MARKER_SAFE_HALF_EXTENT.toDouble()),
+    y,
+    z.coerceIn(-MARKER_SAFE_HALF_EXTENT.toDouble(), MARKER_SAFE_HALF_EXTENT.toDouble())
+)
 
 private fun ConstructionGeometryState.addMarkerShape(tool: Marker2dShapeTool, draft: List<Marker2dPointState>): ConstructionGeometryState {
     val points = tool.toConstructionPoints(draft)

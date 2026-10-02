@@ -129,12 +129,11 @@ enum class ComparisonOperator { LessThan, LessThanOrEqual, GreaterThan, GreaterT
 object GraphSamples {
     fun starterProject(): GraphProject =
         GraphProject(
-            name = "Starter Graphs",
+            name = "Quadratic and Line",
+            viewport = GraphViewport(xMin = -6.5, xMax = 6.5, yMin = -6.0, yMax = 14.0),
             expressions = listOf(
-                graph("expr-parabola", GraphExpressionKind.Explicit2D, "y = x^2", "Parabola", 0xFF2E7DFF),
-                graph("expr-sine", GraphExpressionKind.Explicit2D, "y = sin(x)", "Sine Wave", 0xFFE53935),
-                graph("expr-polar", GraphExpressionKind.Polar, "r = 2 cos(theta)", "Polar Circle", 0xFF43A047),
-                graph("expr-surface", GraphExpressionKind.ExplicitSurface3D, "z = sin(x) * cos(y)", "3D Wave", 0xFF8E24AA)
+                graph("expr-parabola", GraphExpressionKind.Explicit2D, "y = x^2 - 2x - 1", "Quadratic", 0xFF00CFE8),
+                graph("expr-line", GraphExpressionKind.Explicit2D, "y = 2x + 3", "Line", 0xFF8B4DFF)
             )
         )
 

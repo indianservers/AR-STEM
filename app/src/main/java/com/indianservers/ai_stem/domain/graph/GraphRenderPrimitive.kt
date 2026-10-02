@@ -91,10 +91,10 @@ sealed interface GraphRenderPrimitive {
 class GraphRenderPrimitiveBuilder {
     fun fromCurves(curves: List<GraphCurve>, expressions: List<GraphExpression>, updateVersion: Long): List<GraphRenderPrimitive> {
         val expressionNames = expressions.associate { it.id to it.displayName }
-        return curves.mapNotNull { curve ->
-            if (curve.points.size < 2) return@mapNotNull null
+        return curves.mapIndexedNotNull { index, curve ->
+            if (curve.points.size < 2) return@mapIndexedNotNull null
             GraphRenderPrimitive.Polyline(
-                id = "polyline-${curve.expressionId}",
+                id = if (index == 0) "polyline-${curve.expressionId}" else "polyline-${curve.expressionId}-$index",
                 sourceExpressionId = curve.expressionId,
                 bounds = curve.points.bounds(),
                 materialKey = "graph-${curve.expressionId}",

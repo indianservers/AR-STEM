@@ -23,12 +23,17 @@ class GraphSampler(
     fun parseExpression(expression: GraphExpression): GraphExpression =
         expression.copy(parse = parser.parse(expression.source))
 
-    fun sampleExpression(expression: GraphExpression, viewport: GraphViewport, quality: GraphQualityPreset): List<GraphCurve> {
+    fun sampleExpression(
+        expression: GraphExpression,
+        viewport: GraphViewport,
+        quality: GraphQualityPreset,
+        variables: Map<String, Double> = emptyMap()
+    ): List<GraphCurve> {
         val parsed = expression.parse as? ParseOutcome.Success ?: parser.parse(expression.source) as? ParseOutcome.Success
             ?: return emptyList()
         return when (expression.kind) {
-            GraphExpressionKind.Explicit2D -> listOf(sampleExplicit(expression.id, parsed.expression, viewport, quality.curveSamples))
-            GraphExpressionKind.Polar -> listOf(samplePolar(expression.id, parsed.expression, quality.curveSamples))
+            GraphExpressionKind.Explicit2D -> sampleExplicit(expression.id, parsed.expression, viewport, quality.curveSamples, variables)
+            GraphExpressionKind.Polar -> listOf(samplePolar(expression.id, parsed.expression, quality.curveSamples, variables))
             GraphExpressionKind.Parametric2D -> sampleParametric2D(expression, viewport, quality)
             GraphExpressionKind.Implicit2D -> sampleImplicit(expression, viewport, quality)
             GraphExpressionKind.Inequality2D -> sampleImplicit(expression, viewport, quality)
@@ -59,26 +64,41 @@ class GraphSampler(
         return GraphSurface(expression.id, vertices, resolution, resolution)
     }
 
-    private fun sampleExplicit(id: String, ast: MathExpressionNode, viewport: GraphViewport, samples: Int): GraphCurve {
-        val points = mutableListOf<GraphPoint>()
+    private fun sampleExplicit(
+        id: String,
+        ast: MathExpressionNode,
+        viewport: GraphViewport,
+        samples: Int,
+        variables: Map<String, Double>
+    ): List<GraphCurve> {
+        val segments = mutableListOf<GraphCurve>()
+        var points = mutableListOf<GraphPoint>()
         val warnings = mutableSetOf<String>()
+        val jumpThreshold = (viewport.yMax - viewport.yMin) * 0.45
+        fun finishSegment() {
+            if (points.size >= 2) segments += GraphCurve(id, points, warnings.toList())
+            points = mutableListOf()
+        }
         for (i in 0..samples) {
             val x = viewport.xMin + (viewport.xMax - viewport.xMin) * i / samples
-            val value = evaluator.evaluate(ast, defaultVariables() + mapOf("x" to x))
+            val value = evaluator.evaluate(ast, defaultVariables() + variables + mapOf("x" to x))
             val y = value.value
             if (y != null && y.isFinite() && y in viewport.yMin..viewport.yMax) {
+                if (points.lastOrNull()?.let { abs(it.y - y) > jumpThreshold } == true) finishSegment()
                 points += GraphPoint(x, y)
-            } else if (value.error != null) {
-                warnings += value.error
+            } else {
+                finishSegment()
+                value.error?.let(warnings::add)
             }
         }
-        return GraphCurve(id, points, warnings.toList())
+        finishSegment()
+        return segments
     }
 
-    private fun samplePolar(id: String, ast: MathExpressionNode, samples: Int): GraphCurve {
+    private fun samplePolar(id: String, ast: MathExpressionNode, samples: Int, variables: Map<String, Double>): GraphCurve {
         val points = (0..samples).mapNotNull { i ->
             val theta = -Math.PI * 2.0 + Math.PI * 4.0 * i / samples
-            val r = evaluator.evaluate(ast, defaultVariables() + mapOf("theta" to theta)).value
+            val r = evaluator.evaluate(ast, defaultVariables() + variables + mapOf("theta" to theta)).value
             if (r != null && r.isFinite()) GraphPoint(r * cos(theta), r * sin(theta)) else null
         }
         return GraphCurve(id, points)

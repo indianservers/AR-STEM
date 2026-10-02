@@ -20,6 +20,8 @@ import com.indianservers.ai_stem.feature.games.mathexpedition.MathExpeditionScre
 import com.indianservers.ai_stem.feature.games.navigation.GamesRoutes
 import com.indianservers.ai_stem.feature.games.tournament.TournamentHubScreen
 import com.indianservers.ai_stem.feature.graphing.GraphingStudioScreen
+import com.indianservers.ai_stem.feature.geometry2d.Geometry2dWorkspaceScreen
+import com.indianservers.ai_stem.feature.geometry3d.Geometry3dWorkspaceScreen
 import com.indianservers.ai_stem.feature.labs.AlgebraLaboratoryScreen
 import com.indianservers.ai_stem.feature.labs.CalculusLaboratoryScreen
 import com.indianservers.ai_stem.feature.labs.DataProbabilityLaboratoryScreen
@@ -48,7 +50,7 @@ fun AiStemApp() {
                 SubjectSelectionScreen(
                     onBack = { navController.popBackStack() },
                     onMathematics = {
-                        navController.navigate(AppDestination.ArViewer.route) {
+                        navController.navigate(AppDestination.Mathematics.route) {
                             launchSingleTop = true
                         }
                     },
@@ -186,6 +188,18 @@ fun AiStemApp() {
                             launchSingleTop = true
                         }
                     },
+                    onOpenGeometry2D = {
+                        navController.navigate(AppDestination.Geometry2DWorkspace.route) { launchSingleTop = true }
+                    },
+                    onOpenGeometry3D = {
+                        navController.navigate(AppDestination.Geometry3DWorkspace.route) { launchSingleTop = true }
+                    },
+                    onOpenAlgebra = {
+                        navController.navigate(AppDestination.AlgebraLab.route) { launchSingleTop = true }
+                    },
+                    onOpenCalculus = {
+                        navController.navigate(AppDestination.CalculusLab.route) { launchSingleTop = true }
+                    },
                     onOpenProjects = {
                         navController.navigate(AppDestination.Projects.route) {
                             launchSingleTop = true
@@ -201,6 +215,12 @@ fun AiStemApp() {
             }
             composable(AppDestination.GraphingStudio.route) {
                 GraphingStudioScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.Geometry2DWorkspace.route) {
+                Geometry2dWorkspaceScreen(onBack = { navController.popBackStack() })
+            }
+            composable(AppDestination.Geometry3DWorkspace.route) {
+                Geometry3dWorkspaceScreen(onBack = { navController.popBackStack() })
             }
             composable(AppDestination.SolarSystem.route) {
                 SolarSystemScreen(
